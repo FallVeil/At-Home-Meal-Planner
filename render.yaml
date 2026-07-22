@@ -1,0 +1,14 @@
+# One-click deploy config for Render (https://render.com — free tier).
+# When you're ready to put the app online, we'll push this folder to a GitHub
+# repo, then "New + > Blueprint" on Render and point it here.
+services:
+  - type: web
+    name: at-home-meal-planner
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      # Set the actual value in the Render dashboard (Environment tab) — never commit the key.
+      - key: SPOONACULAR_API_KEY
+        sync: false

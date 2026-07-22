@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>At-Home Meal Planner</title>
+    <link rel="stylesheet" href="style.css" />
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🍽️</text></svg>" />
+  </head>
+  <body>
+    <header class="topbar">
+      <h1>🍽️ At-Home Meal Planner</h1>
+      <nav class="tabs">
+        <button class="tab active" data-tab="search">Find Recipes</button>
+        <button class="tab" data-tab="week">This Week <span id="weekCount" class="pill">0</span></button>
+        <button class="tab" data-tab="grocery">Grocery List</button>
+      </nav>
+    </header>
+
+    <div id="keyBanner" class="banner hidden">
+      ⚠️ No API key set yet. Add your free Spoonacular key to a <code>.env</code> file and restart the server. See the README.
+    </div>
+
+    <main>
+      <!-- FIND RECIPES -->
+      <section id="tab-search" class="panel active">
+        <form id="searchForm" class="search-bar">
+          <input
+            id="searchInput"
+            type="search"
+            placeholder="Search dishes, ingredients… e.g. chicken pasta, tacos, salmon"
+            autocomplete="off"
+          />
+          <select id="dietSelect" title="Extra dietary filter">
+            <option value="">Any diet</option>
+            <option value="vegetarian">Vegetarian</option>
+            <option value="vegan">Vegan</option>
+            <option value="dairy free">Dairy free</option>
+            <option value="pescetarian">Pescetarian</option>
+            <option value="ketogenic">Keto</option>
+          </select>
+          <button type="submit">Search</button>
+        </form>
+        <div class="filters">
+          <div class="segmented" id="searchMode">
+            <button type="button" class="seg active" data-mode="dish">🍽 Dish name</button>
+            <button type="button" class="seg" data-mode="ingredients">🥘 Ingredients I have</button>
+          </div>
+          <label class="cal-toggle">
+            <input type="checkbox" id="gfFilter" checked />
+            Gluten-free
+          </label>
+          <label class="cal-toggle">
+            <input type="checkbox" id="calFilter" />
+            Under 500 cal / serving
+          </label>
+        </div>
+        <p id="searchHint" class="hint">Searching by <strong>dish name</strong>. Switch to “Ingredients I have” to find recipes that use what's already in your kitchen.</p>
+        <div id="results" class="card-grid"></div>
+      </section>
+
+      <!-- THIS WEEK -->
+      <section id="tab-week" class="panel">
+        <div class="section-head">
+          <h2>This week's dishes</h2>
+          <button id="clearWeek" class="ghost danger">Clear all</button>
+        </div>
+        <div id="weekList" class="card-grid"></div>
+        <div id="weekEmpty" class="empty">
+          No dishes yet. Head to <strong>Find Recipes</strong> and add some!
+        </div>
+        <div class="actions">
+          <button id="makeGrocery" class="primary big">🛒 Make Grocery List</button>
+        </div>
+      </section>
+
+      <!-- GROCERY LIST -->
+      <section id="tab-grocery" class="panel">
+        <div class="section-head">
+          <h2>Grocery list</h2>
+          <div class="head-actions">
+            <button id="copyList" class="ghost">Copy</button>
+            <button id="printList" class="ghost">Print</button>
+          </div>
+        </div>
+        <p id="groceryMeta" class="hint"></p>
+        <div id="groceryList"></div>
+        <div id="groceryEmpty" class="empty">
+          Add dishes to your week, then tap <strong>Make Grocery List</strong>.
+        </div>
+      </section>
+    </main>
+
+    <div id="toast" class="toast hidden"></div>
+
+    <!-- Recipe detail modal -->
+    <div id="modal" class="modal hidden">
+      <div class="modal-card">
+        <button id="modalClose" class="modal-close">✕</button>
+        <div id="modalBody"></div>
+      </div>
+    </div>
+
+    <script src="app.js"></script>
+  </body>
+</html>
