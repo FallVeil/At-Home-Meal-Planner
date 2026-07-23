@@ -12,7 +12,7 @@
       <h1>🍽️ At-Home Meal Planner</h1>
       <nav class="tabs">
         <button class="tab active" data-tab="search">Find Recipes</button>
-        <button class="tab" data-tab="week">This Week <span id="weekCount" class="pill">0</span></button>
+        <button class="tab" data-tab="plan">Planner <span id="planCount" class="pill">0</span></button>
         <button class="tab" data-tab="grocery">Grocery List</button>
       </nav>
     </header>
@@ -24,54 +24,60 @@
     <main>
       <!-- FIND RECIPES -->
       <section id="tab-search" class="panel active">
-        <form id="searchForm" class="search-bar">
-          <input
-            id="searchInput"
-            type="search"
-            placeholder="Search dishes, ingredients… e.g. chicken pasta, tacos, salmon"
-            autocomplete="off"
-          />
-          <select id="dietSelect" title="Extra dietary filter">
-            <option value="">Any diet</option>
-            <option value="vegetarian">Vegetarian</option>
-            <option value="vegan">Vegan</option>
-            <option value="dairy free">Dairy free</option>
-            <option value="pescetarian">Pescetarian</option>
-            <option value="ketogenic">Keto</option>
-          </select>
-          <button type="submit">Search</button>
-        </form>
-        <div class="filters">
-          <div class="segmented" id="searchMode">
-            <button type="button" class="seg active" data-mode="dish">🍽 Dish name</button>
-            <button type="button" class="seg" data-mode="ingredients">🥘 Ingredients I have</button>
+        <div class="search-layout">
+          <aside class="cat-sidebar" id="categoryChips">
+            <button type="button" class="chip active" data-type="">🍴 All</button>
+            <button type="button" class="chip" data-type="appetizer">🧀 Appetizers</button>
+            <button type="button" class="chip" data-type="soup">🍲 Soups</button>
+            <button type="button" class="chip" data-type="salad">🥗 Salads</button>
+            <button type="button" class="chip" data-type="main course">🍽 Entrées</button>
+          </aside>
+          <div class="search-main">
+            <form id="searchForm" class="search-bar">
+              <input
+                id="searchInput"
+                type="search"
+                placeholder="Search dishes, ingredients… e.g. chicken pasta, tacos, salmon"
+                autocomplete="off"
+              />
+              <select id="dietSelect" title="Extra dietary filter">
+                <option value="">Any diet</option>
+                <option value="vegetarian">Vegetarian</option>
+                <option value="vegan">Vegan</option>
+                <option value="dairy free">Dairy free</option>
+                <option value="pescetarian">Pescetarian</option>
+                <option value="ketogenic">Keto</option>
+              </select>
+              <button type="submit">Search</button>
+            </form>
+            <div class="filters">
+              <label class="cal-toggle">
+                <input type="checkbox" id="gfFilter" checked />
+                Gluten-free
+              </label>
+              <label class="cal-toggle">
+                <input type="checkbox" id="calFilter" />
+                Under 500 cal / serving
+              </label>
+            </div>
+            <div id="targetBanner" class="target-banner"></div>
+            <div id="results" class="card-grid"></div>
           </div>
-          <label class="cal-toggle">
-            <input type="checkbox" id="gfFilter" checked />
-            Gluten-free
-          </label>
-          <label class="cal-toggle">
-            <input type="checkbox" id="calFilter" />
-            Under 500 cal / serving
-          </label>
         </div>
-        <p id="searchHint" class="hint">Searching by <strong>dish name</strong>. Switch to “Ingredients I have” to find recipes that use what's already in your kitchen.</p>
-        <div id="results" class="card-grid"></div>
       </section>
 
-      <!-- THIS WEEK -->
-      <section id="tab-week" class="panel">
-        <div class="section-head">
-          <h2>This week's dishes</h2>
-          <button id="clearWeek" class="ghost danger">Clear all</button>
+      <!-- PLANNER (month view, weekly buckets) -->
+      <section id="tab-plan" class="panel">
+        <div class="month-nav">
+          <button id="prevMonth" class="nav-arrow" aria-label="Previous month">◀</button>
+          <h2 id="monthLabel">Month</h2>
+          <button id="nextMonth" class="nav-arrow" aria-label="Next month">▶</button>
         </div>
-        <div id="weekList" class="card-grid"></div>
-        <div id="weekEmpty" class="empty">
-          No dishes yet. Head to <strong>Find Recipes</strong> and add some!
-        </div>
-        <div class="actions">
-          <button id="makeGrocery" class="primary big">🛒 Make Grocery List</button>
-        </div>
+        <p class="hint">
+          Plan a month at a time. Tap <strong>＋ Add dishes</strong> on a week, pick recipes from
+          <strong>Find Recipes</strong>, then make that week's grocery list when you're ready.
+        </p>
+        <div id="weeksContainer"></div>
       </section>
 
       <!-- GROCERY LIST -->
@@ -86,7 +92,7 @@
         <p id="groceryMeta" class="hint"></p>
         <div id="groceryList"></div>
         <div id="groceryEmpty" class="empty">
-          Add dishes to your week, then tap <strong>Make Grocery List</strong>.
+          Go to the <strong>Planner</strong>, add dishes to a week, then tap that week's <strong>🛒 List</strong>.
         </div>
       </section>
     </main>

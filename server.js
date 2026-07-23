@@ -12,7 +12,13 @@ const API_KEY = process.env.SPOONACULAR_API_KEY;
 const SPOON = "https://api.spoonacular.com";
 
 app.use(express.json());
-app.use(express.static(path.join(__dirname, "public")));
+// "no-cache" = browsers may store files but must revalidate (via ETag) each load,
+// so updated CSS/JS always take effect after a deploy while unchanged files 304.
+app.use(
+  express.static(path.join(__dirname, "public"), {
+    setHeaders: (res) => res.setHeader("Cache-Control", "no-cache"),
+  })
+);
 
 // Tiny in-memory cache so repeated recipe lookups don't burn API quota.
 const cache = new Map();
@@ -57,43 +63,37 @@ app.get("/api/config", (req, res) => {
   res.json({ hasKey: Boolean(API_KEY && API_KEY !== "your_key_here") });
 });
 
-// Search recipes.
-//   mode=dish        -> match by recipe title/keyword (query)
-//   mode=ingredients -> match recipes that USE the given ingredients (includeIngredients)
-//   gf=1             -> filter to gluten-free (default on in the UI, but optional)
+// Search recipes by title/keyword, optionally within a dish-type category.
+//   type=appetizer|soup|salad|main course -> category filter
+//   gf=1     -> filter to gluten-free (default on in the UI, but optional)
+//   under500 -> cap at 500 calories per serving
 app.get("/api/search", async (req, res) => {
   if (!requireKey(res)) return;
   const query = (req.query.query || "").toString().trim();
   const number = Math.min(parseInt(req.query.number, 10) || 12, 24);
   const diet = (req.query.diet || "").toString().trim();
-  const mode = (req.query.mode || "dish").toString();
+  const type = (req.query.type || "").toString().trim(); // dish-type category
   const glutenFree = ["1", "true", "yes"].includes(
     (req.query.gf || "").toString().toLowerCase()
   );
   const under500 = ["1", "true", "yes"].includes(
     (req.query.under500 || "").toString().toLowerCase()
   );
-  const cacheKey = `search:${mode}:${query}:${diet}:${glutenFree}:${under500}:${number}`;
+  const cacheKey = `search:${type}:${query}:${diet}:${glutenFree}:${under500}:${number}`;
   const cached = cacheGet(cacheKey);
   if (cached) return res.json(cached);
   try {
     const params = {
+      query,
       number,
       addRecipeNutrition: "true", // Per-serving nutrition for every result.
       instructionsRequired: "true",
+      sort: query ? "popularity" : "random",
     };
+    if (type) params.type = type; // e.g. "salad", "soup", "appetizer", "main course"
     if (diet) params.diet = diet;
     if (glutenFree) params.intolerances = "gluten"; // Optional celiac filter.
     if (under500) params.maxCalories = 500; // Calories per serving.
-    if (mode === "ingredients" && query) {
-      // Find recipes that use these ingredients (comma-separated list ok),
-      // sorted so the fewest extra items to buy come first.
-      params.includeIngredients = query;
-      params.sort = "min-missing-ingredients";
-    } else {
-      params.query = query;
-      params.sort = query ? "popularity" : "random";
-    }
     const data = await spoonFetch("/recipes/complexSearch", params);
     const results = (data.results || []).map((r) => ({
       id: r.id,

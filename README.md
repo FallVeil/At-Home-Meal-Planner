@@ -62,18 +62,21 @@ Press `Ctrl + C` in PowerShell to stop the server.
 
 ## How to use
 
-> 🌾🚫 **Every recipe is gluten-free.** Searches are automatically filtered to exclude
-> gluten (celiac-safe) — there's no way to turn this off. Optionally tick **Under 500 cal
-> / serving** to show only lighter meals. Calories and full nutrition (protein/carbs/fat
-> per serving) appear on each recipe card and in the recipe detail view.
+> 🌾 **Gluten-free** is on by default (a checkbox you can toggle off). Optionally tick
+> **Under 500 cal / serving** for lighter meals. Calories and full nutrition
+> (protein/carbs/fat per serving) appear on each recipe card and in the detail view.
 
-1. **Find Recipes** — search by dish or ingredient (e.g. "salmon", "chicken tacos").
-   Click a photo or title to see ingredients + nutrition. Tap **＋ Add to week**.
-2. **This Week** — review your chosen dishes; remove any you change your mind about.
-3. **Make Grocery List** — combines all ingredients, groups them by aisle, and sums
-   duplicates. Check items off as you shop, or **Copy** / **Print** the list.
+1. **Find Recipes** — search by dish or ingredient, and/or pick a **category** from the
+   left column (Appetizers, Soups, Salads, Entrées). Click a photo or title to see
+   ingredients + nutrition. Tap **＋ Add to plan** to add to the currently-selected week.
+2. **Planner** — plan a **month at a time**. Use ◀ ▶ to move between months. Each week is
+   a bucket: tap **＋ Add dishes** to make it the target, then add recipes from Find Recipes.
+3. **Grocery List** — from any week in the Planner, tap **🛒 List**. It combines that week's
+   ingredients, groups them by aisle, and sums duplicates. Check items off as you shop, or
+   **Copy** / **Print** the list.
 
-Your weekly picks are saved in the browser automatically, so they're still there next time.
+Your whole month's plan is saved in the browser automatically, so it's still there next time.
+The app uses a **dark theme**.
 
 ---
 

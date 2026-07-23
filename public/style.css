@@ -1,15 +1,15 @@
 :root {
-  --bg: #faf7f2;
-  --card: #ffffff;
-  --ink: #2b2b2b;
-  --muted: #7a7a7a;
-  --line: #ece7df;
-  --accent: #e0663a;
-  --accent-dark: #c4522b;
-  --green: #4a8a5c;
-  --green-dark: #3c7049;
-  --danger: #c0392b;
-  --shadow: 0 2px 10px rgba(0, 0, 0, 0.06);
+  --bg: #17150f;
+  --card: #221f18;
+  --ink: #ece7dc;
+  --muted: #9a9283;
+  --line: #37322a;
+  --accent: #ef7a4c;
+  --accent-dark: #d76438;
+  --green: #5aa36c;
+  --green-dark: #4c8a5c;
+  --danger: #e06a5a;
+  --shadow: 0 2px 12px rgba(0, 0, 0, 0.4);
   --radius: 14px;
 }
 
@@ -64,9 +64,9 @@ main { max-width: 1000px; margin: 0 auto; padding: 22px 20px 80px; }
 
 /* Banners / hints */
 .banner {
-  background: #fff4e5;
-  border: 1px solid #ffd8a8;
-  color: #a15c00;
+  background: #3a2e17;
+  border: 1px solid #5c4a22;
+  color: #e8b866;
   padding: 12px 16px;
   border-radius: 10px;
   margin: 14px auto 0;
@@ -80,25 +80,73 @@ main { max-width: 1000px; margin: 0 auto; padding: 22px 20px 80px; }
 /* Filter row */
 .filters { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-top: 12px; }
 
-/* Search-mode segmented toggle */
-.segmented {
-  display: inline-flex;
+/* Find Recipes: category sidebar (left) + search main (right) */
+.search-layout { display: flex; gap: 18px; align-items: flex-start; }
+.cat-sidebar {
+  flex: 0 0 160px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  position: sticky;
+  top: 96px;
+}
+.search-main { flex: 1 1 auto; min-width: 0; }
+.chip {
   border: 1px solid var(--line);
-  border-radius: 999px;
-  overflow: hidden;
   background: var(--card);
-}
-.seg {
-  border: none;
-  background: transparent;
-  padding: 8px 15px;
-  font-size: 0.85rem;
+  padding: 10px 14px;
+  border-radius: 10px;
+  font-size: 0.9rem;
   cursor: pointer;
-  color: var(--muted);
-  white-space: nowrap;
+  color: var(--ink);
+  text-align: left;
+  width: 100%;
 }
-.seg.active { background: var(--accent); color: #fff; font-weight: 600; }
-.seg:not(.active):hover { background: var(--bg); color: var(--ink); }
+.chip:hover { background: var(--bg); }
+.chip.active { background: var(--accent); color: #fff; border-color: var(--accent); font-weight: 600; }
+
+/* "Adding to week X" banner on the search page */
+.target-banner {
+  margin: 14px 0 4px;
+  padding: 9px 13px;
+  background: #1b2733;
+  border: 1px solid #2c3f52;
+  border-radius: 10px;
+  font-size: 0.9rem;
+}
+.target-banner .muted-note { color: var(--muted); font-weight: 400; font-size: 0.83rem; }
+
+/* Planner: month navigation */
+.month-nav { display: flex; align-items: center; justify-content: center; gap: 16px; margin-bottom: 6px; }
+.month-nav h2 { margin: 0; font-size: 1.3rem; min-width: 190px; text-align: center; }
+.nav-arrow {
+  border: 1px solid var(--line);
+  background: var(--card);
+  width: 40px; height: 40px;
+  border-radius: 50%;
+  cursor: pointer;
+  font-size: 1rem;
+  color: var(--ink);
+}
+.nav-arrow:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+/* Planner: week blocks */
+.week-block {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--card);
+  padding: 14px 16px;
+  margin-bottom: 14px;
+}
+.week-block.target { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(224, 102, 58, 0.12); }
+.week-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.week-title strong { font-size: 1.02rem; }
+.week-title .count { display: block; color: var(--muted); font-size: 0.82rem; margin-top: 2px; }
+.week-head-actions { display: flex; gap: 8px; }
+.week-head-actions .ghost { padding: 7px 12px; font-size: 0.86rem; }
+.week-head-actions .ghost[disabled] { opacity: 0.4; cursor: not-allowed; }
+.week-cards { margin-top: 12px; }
+.week-empty { color: var(--muted); font-size: 0.9rem; padding: 10px 2px 2px; }
 .cal-toggle {
   display: inline-flex;
   align-items: center;
@@ -112,8 +160,8 @@ main { max-width: 1000px; margin: 0 auto; padding: 22px 20px 80px; }
 /* Nutrition block in recipe modal */
 .gf-note {
   display: inline-block;
-  background: #e8f3ec;
-  color: var(--green-dark);
+  background: #24352a;
+  color: #9ad4a9;
   border-radius: 6px;
   padding: 3px 9px;
   font-size: 0.8rem;
@@ -180,7 +228,7 @@ button { font-family: inherit; }
   color: var(--ink);
 }
 .ghost:hover { background: var(--bg); }
-.ghost.danger { color: var(--danger); border-color: #ecc7c3; }
+.ghost.danger { color: var(--danger); border-color: #5a3b36; }
 
 /* Card grid */
 .card-grid {
@@ -201,7 +249,7 @@ button { font-family: inherit; }
   width: 100%;
   height: 150px;
   object-fit: cover;
-  background: #eee;
+  background: #2a2620;
   cursor: pointer;
 }
 .card-body { padding: 12px 14px 14px; display: flex; flex-direction: column; gap: 8px; flex: 1; }
@@ -220,16 +268,16 @@ button { font-family: inherit; }
   font-weight: 600;
 }
 .add-btn:hover { background: var(--green-dark); }
-.add-btn.added { background: #d8e6dc; color: var(--green-dark); }
+.add-btn.added { background: #2f3d33; color: #9ad4a9; }
 .remove-btn {
   background: transparent;
-  border: 1px solid #ecc7c3;
+  border: 1px solid #5a3b36;
   color: var(--danger);
   border-radius: 8px;
   padding: 9px 12px;
   cursor: pointer;
 }
-.remove-btn:hover { background: #fbeae8; }
+.remove-btn:hover { background: #3a2723; }
 
 /* Section heads */
 .section-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
@@ -285,13 +333,14 @@ button { font-family: inherit; }
   bottom: 24px;
   left: 50%;
   transform: translateX(-50%);
-  background: var(--ink);
-  color: #fff;
+  background: #322d25;
+  color: var(--ink);
+  border: 1px solid var(--line);
   padding: 11px 20px;
   border-radius: 10px;
   font-size: 0.92rem;
   z-index: 50;
-  box-shadow: 0 4px 16px rgba(0,0,0,0.2);
+  box-shadow: 0 6px 20px rgba(0,0,0,0.5);
 }
 
 /* Modal */
@@ -328,8 +377,13 @@ button { font-family: inherit; }
   .tab { padding: 9px 12px; font-size: 0.9rem; }
   main { padding: 16px 14px 90px; }
 
-  /* Two roomy columns of recipe cards on a phone. */
-  .card-grid { grid-template-columns: repeat(2, 1fr); gap: 12px; }
+  /* Category sidebar becomes a slim left rail on phones. */
+  .search-layout { gap: 10px; }
+  .cat-sidebar { flex-basis: 96px; position: static; gap: 6px; }
+  .chip { padding: 9px 8px; font-size: 0.78rem; }
+
+  /* Recipe cards: single column beside the rail so images stay legible. */
+  .card-grid { grid-template-columns: 1fr; gap: 12px; }
   .card img { height: 110px; }
   .card-body { padding: 10px; }
   .card-title { font-size: 0.9rem; }

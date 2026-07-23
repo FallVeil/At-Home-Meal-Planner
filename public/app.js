@@ -1,75 +1,148 @@
-// ---------- State ----------
-const STORAGE_KEY = "mealPlanner.week.v1";
-let week = loadWeek(); // array of { id, title, image, readyInMinutes, servings }
+// ============================================================
+//  State
+// ============================================================
+const PLAN_KEY = "mealPlanner.plan.v2";
+const OLD_WEEK_KEY = "mealPlanner.week.v1";
 
-function loadWeek() {
+// plan = { "YYYY-MM-DD" (Monday of the week): [ {recipe}, ... ] }
+let plan = loadPlan();
+let viewDate = new Date(); // anchor for the month currently shown in the Planner
+let targetWeek = weekKeyOf(new Date()); // week new dishes get added to
+let activeCategory = ""; // dish-type filter for search
+let groceryWeek = null; // which week the Grocery tab is currently showing
+
+function loadPlan() {
   try {
-    return JSON.parse(localStorage.getItem(STORAGE_KEY)) || [];
+    const p = JSON.parse(localStorage.getItem(PLAN_KEY));
+    if (p && typeof p === "object" && !Array.isArray(p)) return p;
   } catch {
-    return [];
+    /* ignore */
   }
+  // One-time migration: fold an old single-week list into the current week.
+  try {
+    const old = JSON.parse(localStorage.getItem(OLD_WEEK_KEY));
+    if (Array.isArray(old) && old.length) {
+      const migrated = { [weekKeyOf(new Date())]: old };
+      localStorage.setItem(PLAN_KEY, JSON.stringify(migrated));
+      localStorage.removeItem(OLD_WEEK_KEY);
+      return migrated;
+    }
+  } catch {
+    /* ignore */
+  }
+  return {};
 }
-function saveWeek() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(week));
-  updateWeekCount();
+function savePlan() {
+  localStorage.setItem(PLAN_KEY, JSON.stringify(plan));
+  updatePlanCount();
 }
-function inWeek(id) {
-  return week.some((r) => String(r.id) === String(id));
+const weekDishes = (key) => plan[key] || [];
+const inWeek = (key, id) => weekDishes(key).some((r) => String(r.id) === String(id));
+const totalDishes = () =>
+  Object.values(plan).reduce((n, arr) => n + (arr ? arr.length : 0), 0);
+
+function addToWeek(key, recipe) {
+  if (!plan[key]) plan[key] = [];
+  if (plan[key].some((r) => String(r.id) === String(recipe.id))) return false;
+  plan[key].push(recipe);
+  // Drop empty weeks kept around by removals, then save.
+  savePlan();
+  return true;
+}
+function removeFromWeek(key, id) {
+  if (!plan[key]) return;
+  plan[key] = plan[key].filter((r) => String(r.id) !== String(id));
+  if (!plan[key].length) delete plan[key];
+  savePlan();
 }
 
-// ---------- Elements ----------
+// ============================================================
+//  Date helpers (weeks start Monday)
+// ============================================================
+function startOfWeek(d) {
+  const date = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const dow = (date.getDay() + 6) % 7; // 0 = Monday … 6 = Sunday
+  date.setDate(date.getDate() - dow);
+  return date;
+}
+function isoDate(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+// Function declaration (hoisted) so it's callable from the state setup above.
+function weekKeyOf(d) {
+  return isoDate(startOfWeek(d));
+}
+function parseKey(key) {
+  const [y, m, d] = key.split("-").map(Number);
+  return new Date(y, m - 1, d);
+}
+function weeksForMonth(year, month) {
+  const firstOfMonth = new Date(year, month, 1);
+  const lastOfMonth = new Date(year, month + 1, 0);
+  const weeks = [];
+  let cur = startOfWeek(firstOfMonth);
+  while (cur <= lastOfMonth) {
+    weeks.push(new Date(cur));
+    cur = new Date(cur.getFullYear(), cur.getMonth(), cur.getDate() + 7);
+  }
+  return weeks;
+}
+function fmtRange(monday) {
+  const sun = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + 6);
+  const a = monday.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  const b = sun.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  return `${a} – ${b}`;
+}
+const fmtMonth = (y, m) =>
+  new Date(y, m, 1).toLocaleDateString(undefined, { month: "long", year: "numeric" });
+const isThisWeek = (key) => key === weekKeyOf(new Date());
+
+// ============================================================
+//  Elements & tabs
+// ============================================================
 const $ = (sel) => document.querySelector(sel);
 const results = $("#results");
-const weekList = $("#weekList");
-const weekEmpty = $("#weekEmpty");
+const weeksContainer = $("#weeksContainer");
 const groceryList = $("#groceryList");
 const groceryEmpty = $("#groceryEmpty");
 const groceryMeta = $("#groceryMeta");
 
-// ---------- Tabs ----------
 document.querySelectorAll(".tab").forEach((tab) => {
   tab.addEventListener("click", () => activateTab(tab.dataset.tab));
 });
 function activateTab(name) {
-  document.querySelectorAll(".tab").forEach((t) =>
-    t.classList.toggle("active", t.dataset.tab === name)
-  );
-  document.querySelectorAll(".panel").forEach((p) =>
-    p.classList.toggle("active", p.id === `tab-${name}`)
-  );
-  if (name === "week") renderWeek();
+  document
+    .querySelectorAll(".tab")
+    .forEach((t) => t.classList.toggle("active", t.dataset.tab === name));
+  document
+    .querySelectorAll(".panel")
+    .forEach((p) => p.classList.toggle("active", p.id === `tab-${name}`));
+  if (name === "plan") renderPlanner();
+  if (name === "search") updateTargetBanner();
 }
 
-// ---------- Search ----------
-let searchMode = "dish"; // "dish" = by title, "ingredients" = by what you have on hand
-
+// ============================================================
+//  Search
+// ============================================================
 $("#searchForm").addEventListener("submit", (e) => {
   e.preventDefault();
   runSearch();
 });
-// Re-run the search immediately when any filter changes.
 $("#dietSelect").addEventListener("change", runSearch);
 $("#calFilter").addEventListener("change", runSearch);
 $("#gfFilter").addEventListener("change", runSearch);
 
-// Search-mode toggle (Dish name vs Ingredients I have).
-document.querySelectorAll("#searchMode .seg").forEach((btn) => {
-  btn.addEventListener("click", () => {
-    searchMode = btn.dataset.mode;
+// Category chips.
+document.querySelectorAll("#categoryChips .chip").forEach((chip) => {
+  chip.addEventListener("click", () => {
+    activeCategory = chip.dataset.type;
     document
-      .querySelectorAll("#searchMode .seg")
-      .forEach((b) => b.classList.toggle("active", b === btn));
-    const input = $("#searchInput");
-    if (searchMode === "ingredients") {
-      input.placeholder = "Ingredients you have… e.g. ground beef, rice, onion";
-      $("#searchHint").innerHTML =
-        "Searching by <strong>ingredients you have</strong>. List them comma-separated — recipes that use the most of them show first.";
-    } else {
-      input.placeholder = "Search dishes, ingredients… e.g. chicken pasta, tacos, salmon";
-      $("#searchHint").innerHTML =
-        "Searching by <strong>dish name</strong>. Switch to “Ingredients I have” to cook with what's already in your kitchen.";
-    }
-    if (input.value.trim()) runSearch();
+      .querySelectorAll("#categoryChips .chip")
+      .forEach((c) => c.classList.toggle("active", c === chip));
+    runSearch();
   });
 });
 
@@ -80,7 +153,8 @@ async function runSearch() {
   const gf = $("#gfFilter").checked;
   results.innerHTML = `<div class="loading"><div class="spinner"></div>Searching recipes…</div>`;
   try {
-    const params = new URLSearchParams({ query, diet, number: "12", mode: searchMode });
+    const params = new URLSearchParams({ query, diet, number: "12" });
+    if (activeCategory) params.set("type", activeCategory);
     if (under500) params.set("under500", "1");
     if (gf) params.set("gf", "1");
     const res = await fetch(`/api/search?${params}`);
@@ -94,15 +168,24 @@ async function runSearch() {
 
 function renderResults(list) {
   if (!list || !list.length) {
-    results.innerHTML = `<div class="empty">No recipes found. Try a different search.</div>`;
+    results.innerHTML = `<div class="empty">No recipes found. Try a different search or category.</div>`;
     return;
   }
   results.innerHTML = "";
   list.forEach((r) => results.appendChild(recipeCard(r, "search")));
 }
 
-// ---------- Cards ----------
-function recipeCard(r, context) {
+function updateTargetBanner() {
+  const banner = $("#targetBanner");
+  const monday = parseKey(targetWeek);
+  const label = isThisWeek(targetWeek) ? "this week" : `week of ${fmtRange(monday)}`;
+  banner.innerHTML = `📅 Adding dishes to <strong>${escapeHtml(label)}</strong> <span class="muted-note">— change in Planner</span>`;
+}
+
+// ============================================================
+//  Recipe cards
+// ============================================================
+function recipeCard(r, context, weekKey) {
   const card = document.createElement("div");
   card.className = "card";
   const meta = [
@@ -128,23 +211,23 @@ function recipeCard(r, context) {
   img.onerror = () => (img.src = placeholder());
 
   const actions = card.querySelector(".card-actions");
-  if (context === "week") {
+  if (context === "plan") {
     const remove = document.createElement("button");
     remove.className = "remove-btn";
     remove.textContent = "Remove";
     remove.addEventListener("click", () => {
-      week = week.filter((x) => String(x.id) !== String(r.id));
-      saveWeek();
-      renderWeek();
+      removeFromWeek(weekKey, r.id);
+      renderPlanner();
     });
     actions.appendChild(remove);
   } else {
+    const added = inWeek(targetWeek, r.id);
     const add = document.createElement("button");
-    add.className = "add-btn" + (inWeek(r.id) ? " added" : "");
-    add.textContent = inWeek(r.id) ? "✓ In week" : "＋ Add to week";
+    add.className = "add-btn" + (added ? " added" : "");
+    add.textContent = added ? "✓ Added" : "＋ Add to plan";
     add.addEventListener("click", () => {
-      if (inWeek(r.id)) return;
-      week.push({
+      if (inWeek(targetWeek, r.id)) return;
+      addToWeek(targetWeek, {
         id: r.id,
         title: r.title,
         image: r.image,
@@ -152,62 +235,97 @@ function recipeCard(r, context) {
         servings: r.servings,
         calories: r.calories,
       });
-      saveWeek();
       add.classList.add("added");
-      add.textContent = "✓ In week";
-      toast(`Added “${r.title}” to this week`);
+      add.textContent = "✓ Added";
+      const label = isThisWeek(targetWeek) ? "this week" : `week of ${fmtRange(parseKey(targetWeek))}`;
+      toast(`Added “${r.title}” to ${label}`);
     });
     actions.appendChild(add);
   }
   return card;
 }
 
-// ---------- This Week ----------
-function renderWeek() {
-  weekList.innerHTML = "";
-  if (!week.length) {
-    weekEmpty.classList.remove("hidden");
-    $("#makeGrocery").disabled = true;
-    $("#makeGrocery").style.opacity = 0.5;
-  } else {
-    weekEmpty.classList.add("hidden");
-    $("#makeGrocery").disabled = false;
-    $("#makeGrocery").style.opacity = 1;
-    week.forEach((r) => weekList.appendChild(recipeCard(r, "week")));
-  }
-}
-$("#clearWeek").addEventListener("click", () => {
-  if (!week.length) return;
-  if (confirm("Remove all dishes from this week?")) {
-    week = [];
-    saveWeek();
-    renderWeek();
-  }
+// ============================================================
+//  Planner (month view)
+// ============================================================
+$("#prevMonth").addEventListener("click", () => {
+  viewDate = new Date(viewDate.getFullYear(), viewDate.getMonth() - 1, 1);
+  renderPlanner();
+});
+$("#nextMonth").addEventListener("click", () => {
+  viewDate = new Date(viewDate.getFullYear(), viewDate.getMonth() + 1, 1);
+  renderPlanner();
 });
 
-// ---------- Grocery list ----------
-$("#makeGrocery").addEventListener("click", buildGrocery);
+function renderPlanner() {
+  const year = viewDate.getFullYear();
+  const month = viewDate.getMonth();
+  $("#monthLabel").textContent = fmtMonth(year, month);
+  weeksContainer.innerHTML = "";
 
-async function buildGrocery() {
-  if (!week.length) return;
+  weeksForMonth(year, month).forEach((monday) => {
+    const key = isoDate(monday);
+    const dishes = weekDishes(key);
+    const isTarget = key === targetWeek;
+
+    const block = document.createElement("div");
+    block.className = "week-block" + (isTarget ? " target" : "");
+    block.innerHTML = `
+      <div class="week-head">
+        <div class="week-title">
+          <strong>${isThisWeek(key) ? "This week" : "Week of"} ${escapeHtml(fmtRange(monday))}</strong>
+          <span class="count">${dishes.length} dish${dishes.length === 1 ? "" : "es"}${isTarget ? " · adding here" : ""}</span>
+        </div>
+        <div class="week-head-actions">
+          <button class="ghost add-here">＋ Add dishes</button>
+          <button class="ghost mk-grocery"${dishes.length ? "" : " disabled"}>🛒 List</button>
+        </div>
+      </div>
+      <div class="week-cards card-grid"></div>
+      <div class="week-empty${dishes.length ? " hidden" : ""}">No dishes yet — tap “＋ Add dishes”.</div>`;
+
+    const cards = block.querySelector(".week-cards");
+    dishes.forEach((r) => cards.appendChild(recipeCard(r, "plan", key)));
+
+    block.querySelector(".add-here").addEventListener("click", () => {
+      targetWeek = key;
+      updateTargetBanner();
+      activateTab("search");
+      toast(`Now adding to ${isThisWeek(key) ? "this week" : "week of " + fmtRange(monday)}`);
+    });
+    const groceryBtn = block.querySelector(".mk-grocery");
+    if (dishes.length) {
+      groceryBtn.addEventListener("click", () => buildGrocery(key));
+    }
+    weeksContainer.appendChild(block);
+  });
+}
+
+// ============================================================
+//  Grocery list (per week)
+// ============================================================
+async function buildGrocery(weekKey) {
+  const dishes = weekDishes(weekKey);
+  if (!dishes.length) return;
+  groceryWeek = weekKey;
   activateTab("grocery");
   groceryEmpty.classList.add("hidden");
   groceryList.innerHTML = `<div class="loading"><div class="spinner"></div>Building your grocery list…</div>`;
   groceryMeta.textContent = "";
   try {
-    const ids = week.map((r) => r.id).join(",");
+    const ids = dishes.map((r) => r.id).join(",");
     const res = await fetch(`/api/recipes?ids=${encodeURIComponent(ids)}`);
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || "Could not load ingredients");
-    renderGrocery(data.recipes);
+    renderGrocery(data.recipes, weekKey);
   } catch (err) {
     groceryList.innerHTML = `<div class="empty">😕 ${escapeHtml(err.message)}</div>`;
   }
 }
 
-function renderGrocery(recipes) {
-  // Combine ingredients across all recipes.
-  // Key on name + unit so "2 cup" + "1 cup" sums, but "cloves" vs "cup" stay separate.
+function renderGrocery(recipes, weekKey) {
+  // Combine ingredients across all recipes, keyed on name + unit so
+  // "2 cup" + "1 cup" sum, but "cloves" vs "cup" stay separate.
   const combined = new Map();
   recipes.forEach((recipe) => {
     (recipe.ingredients || []).forEach((ing) => {
@@ -216,13 +334,7 @@ function renderGrocery(recipes) {
       const unit = (ing.unit || "").trim().toLowerCase();
       const key = `${name.toLowerCase()}|${unit}`;
       if (!combined.has(key)) {
-        combined.set(key, {
-          name,
-          unit,
-          amount: 0,
-          aisle: ing.aisle || "Other",
-          usedIn: new Set(),
-        });
+        combined.set(key, { name, unit, amount: 0, aisle: ing.aisle || "Other", usedIn: new Set() });
       }
       const entry = combined.get(key);
       entry.amount += Number(ing.amount) || 0;
@@ -235,11 +347,8 @@ function renderGrocery(recipes) {
     return;
   }
 
-  // Group by aisle.
   const byAisle = {};
-  for (const item of combined.values()) {
-    (byAisle[item.aisle] ||= []).push(item);
-  }
+  for (const item of combined.values()) (byAisle[item.aisle] ||= []).push(item);
   const aisleOrder = Object.keys(byAisle).sort((a, b) => {
     if (a === "Other") return 1;
     if (b === "Other") return -1;
@@ -257,9 +366,9 @@ function renderGrocery(recipes) {
     groceryList.appendChild(section);
   });
 
-  const dishCount = recipes.length;
-  const itemCount = combined.size;
-  groceryMeta.textContent = `${itemCount} items for ${dishCount} dish${dishCount === 1 ? "" : "es"}. Tap an item to check it off.`;
+  const monday = parseKey(weekKey);
+  const weekLabel = isThisWeek(weekKey) ? "this week" : `week of ${fmtRange(monday)}`;
+  groceryMeta.textContent = `${weekLabel} — ${combined.size} items for ${recipes.length} dish${recipes.length === 1 ? "" : "es"}. Tap an item to check it off.`;
 }
 
 function groceryRow(item) {
@@ -279,7 +388,6 @@ function groceryRow(item) {
   return row;
 }
 
-// ---------- Grocery actions ----------
 $("#copyList").addEventListener("click", () => {
   const lines = [];
   document.querySelectorAll("#groceryList .aisle").forEach((aisle) => {
@@ -300,7 +408,9 @@ $("#printList").addEventListener("click", () => {
   window.print();
 });
 
-// ---------- Recipe modal ----------
+// ============================================================
+//  Recipe detail modal
+// ============================================================
 const modal = $("#modal");
 const modalBody = $("#modalBody");
 $("#modalClose").addEventListener("click", closeModal);
@@ -324,47 +434,66 @@ async function showRecipe(id) {
     const r = data.recipes[0];
     if (!r) throw new Error("Recipe not found");
     const n = r.nutrition;
+    const added = inWeek(targetWeek, r.id);
     modalBody.innerHTML = `
       <img src="${r.image || placeholder()}" alt="${escapeHtml(r.title)}" />
       <h2>${escapeHtml(r.title)}</h2>
       <p class="card-meta">${[
         r.readyInMinutes ? `⏱ ${r.readyInMinutes} min` : "",
         r.servings ? `🍽 ${r.servings} servings` : "",
-      ].filter(Boolean).join(" · ")}</p>
-      <span class="gf-note">✓ Gluten-free</span>
-      ${n ? `<div class="nutri">
+      ]
+        .filter(Boolean)
+        .join(" · ")}</p>
+      ${r.glutenFree ? '<span class="gf-note">✓ Gluten-free</span>' : ""}
+      ${
+        n
+          ? `<div class="nutri">
         <span><strong>${n.calories ?? "?"}</strong> cal</span>
         <span><strong>${n.protein ?? "?"}g</strong> protein</span>
         <span><strong>${n.carbs ?? "?"}g</strong> carbs</span>
         <span><strong>${n.fat ?? "?"}g</strong> fat</span>
         <em>per serving</em>
-      </div>` : ""}
+      </div>`
+          : ""
+      }
       <h3>Ingredients</h3>
       <ul class="ing-list">
         ${(r.ingredients || []).map((i) => `<li>${escapeHtml(i.original || i.name)}</li>`).join("")}
       </ul>
-      ${r.sourceUrl ? `<p><a href="${r.sourceUrl}" target="_blank" rel="noopener">View full recipe & instructions →</a></p>` : ""}
+      ${
+        r.sourceUrl
+          ? `<p><a href="${r.sourceUrl}" target="_blank" rel="noopener">View full recipe & instructions →</a></p>`
+          : ""
+      }
       <div class="card-actions" style="margin-top:16px">
-        <button class="add-btn" id="modalAdd">${inWeek(r.id) ? "✓ In week" : "＋ Add to week"}</button>
+        <button class="add-btn${added ? " added" : ""}" id="modalAdd">${added ? "✓ Added" : "＋ Add to plan"}</button>
       </div>`;
     const addBtn = $("#modalAdd");
-    if (inWeek(r.id)) addBtn.classList.add("added");
     addBtn.addEventListener("click", () => {
-      if (inWeek(r.id)) return;
-      week.push({ id: r.id, title: r.title, image: r.image, readyInMinutes: r.readyInMinutes, servings: r.servings, calories: r.nutrition ? r.nutrition.calories : undefined });
-      saveWeek();
+      if (inWeek(targetWeek, r.id)) return;
+      addToWeek(targetWeek, {
+        id: r.id,
+        title: r.title,
+        image: r.image,
+        readyInMinutes: r.readyInMinutes,
+        servings: r.servings,
+        calories: n ? n.calories : undefined,
+      });
       addBtn.classList.add("added");
-      addBtn.textContent = "✓ In week";
-      toast(`Added “${r.title}” to this week`);
+      addBtn.textContent = "✓ Added";
+      const label = isThisWeek(targetWeek) ? "this week" : `week of ${fmtRange(parseKey(targetWeek))}`;
+      toast(`Added “${r.title}” to ${label}`);
     });
   } catch (err) {
     modalBody.innerHTML = `<div class="empty">😕 ${escapeHtml(err.message)}</div>`;
   }
 }
 
-// ---------- Helpers ----------
-function updateWeekCount() {
-  $("#weekCount").textContent = week.length;
+// ============================================================
+//  Helpers
+// ============================================================
+function updatePlanCount() {
+  $("#planCount").textContent = totalDishes();
 }
 function toast(msg) {
   const el = $("#toast");
@@ -375,7 +504,6 @@ function toast(msg) {
 }
 function formatQty(amount, unit) {
   if (!amount || amount <= 0) return unit ? unit : "";
-  // Round nicely: whole numbers stay whole, else 2 decimals trimmed.
   const rounded = Math.round(amount * 100) / 100;
   const num = Number.isInteger(rounded) ? rounded : parseFloat(rounded.toFixed(2));
   return `${num}${unit ? " " + unit : ""}`;
@@ -384,20 +512,27 @@ function capitalize(s) {
   return s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
 }
 function escapeHtml(str) {
-  return String(str ?? "").replace(/[&<>"']/g, (c) => ({
-    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
-  })[c]);
+  return String(str ?? "").replace(
+    /[&<>"']/g,
+    (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])
+  );
 }
 function placeholder() {
-  return "data:image/svg+xml," + encodeURIComponent(
-    `<svg xmlns='http://www.w3.org/2000/svg' width='300' height='200'><rect width='100%' height='100%' fill='#f0ece5'/><text x='50%' y='50%' font-size='48' text-anchor='middle' dy='.35em'>🍽️</text></svg>`
+  return (
+    "data:image/svg+xml," +
+    encodeURIComponent(
+      `<svg xmlns='http://www.w3.org/2000/svg' width='300' height='200'><rect width='100%' height='100%' fill='#f0ece5'/><text x='50%' y='50%' font-size='48' text-anchor='middle' dy='.35em'>🍽️</text></svg>`
+    )
   );
 }
 
-// ---------- Startup ----------
+// ============================================================
+//  Startup
+// ============================================================
 async function init() {
-  updateWeekCount();
-  renderWeek();
+  updatePlanCount();
+  updateTargetBanner();
+  renderPlanner();
   try {
     const res = await fetch("/api/config");
     const cfg = await res.json();
@@ -405,7 +540,6 @@ async function init() {
   } catch {
     /* server not reachable yet — ignore */
   }
-  // Show a friendly starter search.
-  runSearch();
+  runSearch(); // friendly starter results
 }
 init();
