@@ -11,8 +11,8 @@
     <header class="topbar">
       <h1>🍽️ At-Home Meal Planner</h1>
       <nav class="tabs">
-        <button class="tab active" data-tab="search">Find Recipes</button>
-        <button class="tab" data-tab="plan">Planner <span id="planCount" class="pill">0</span></button>
+        <button class="tab" data-tab="search">Find Recipes</button>
+        <button class="tab active" data-tab="plan">Planner <span id="planCount" class="pill">0</span></button>
         <button class="tab" data-tab="grocery">Grocery List</button>
       </nav>
     </header>
@@ -23,7 +23,7 @@
 
     <main>
       <!-- FIND RECIPES -->
-      <section id="tab-search" class="panel active">
+      <section id="tab-search" class="panel">
         <div class="search-layout">
           <aside class="cat-sidebar" id="categoryChips">
             <button type="button" class="chip active" data-type="">🍴 All</button>
@@ -66,16 +66,17 @@
         </div>
       </section>
 
-      <!-- PLANNER (month view, weekly buckets) -->
-      <section id="tab-plan" class="panel">
+      <!-- PLANNER (rolling window: this week + next four) -->
+      <section id="tab-plan" class="panel active">
         <div class="month-nav">
-          <button id="prevMonth" class="nav-arrow" aria-label="Previous month">◀</button>
-          <h2 id="monthLabel">Month</h2>
-          <button id="nextMonth" class="nav-arrow" aria-label="Next month">▶</button>
+          <button id="prevMonth" class="nav-arrow" aria-label="Earlier weeks">◀</button>
+          <h2 id="monthLabel">Weeks</h2>
+          <button id="nextMonth" class="nav-arrow" aria-label="Later weeks">▶</button>
         </div>
         <p class="hint">
-          Plan a month at a time. Tap <strong>＋ Add dishes</strong> on a week, pick recipes from
-          <strong>Find Recipes</strong>, then make that week's grocery list when you're ready.
+          Showing <strong>this week and the next four</strong>. Tap <strong>＋ Add dishes</strong> on a
+          week, pick recipes from <strong>Find Recipes</strong>, then make that week's grocery list.
+          Use ▶ to plan further ahead.
         </p>
         <div id="weeksContainer"></div>
       </section>

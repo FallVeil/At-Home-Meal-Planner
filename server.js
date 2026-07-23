@@ -11,6 +11,22 @@ const PORT = process.env.PORT || 3000;
 const API_KEY = process.env.SPOONACULAR_API_KEY;
 const SPOON = "https://api.spoonacular.com";
 
+// Spoonacular tags recipes with many overlapping dishTypes, so type=X alone
+// leaks (salads into entrees, etc.). We post-filter results: keep a recipe only
+// if its dishTypes hit an "include" tag and none of the "exclude" tags.
+const CATEGORY_FILTERS = {
+  salad: { include: ["salad"], exclude: [] },
+  soup: { include: ["soup"], exclude: [] },
+  appetizer: {
+    include: ["appetizer", "starter", "fingerfood", "antipasti", "antipasto", "hor d'oeuvre", "snack"],
+    exclude: ["salad", "soup", "main course", "main dish"],
+  },
+  "main course": {
+    include: ["main course", "main dish"],
+    exclude: ["salad", "soup", "appetizer", "starter", "dessert"],
+  },
+};
+
 app.use(express.json());
 // "no-cache" = browsers may store files but must revalidate (via ETag) each load,
 // so updated CSS/JS always take effect after a deploy while unchanged files 304.
@@ -83,10 +99,14 @@ app.get("/api/search", async (req, res) => {
   const cached = cacheGet(cacheKey);
   if (cached) return res.json(cached);
   try {
+    const rule = CATEGORY_FILTERS[type];
+    // Over-fetch when we'll post-filter a category, so enough survive.
+    const fetchNumber = rule ? Math.min(number * 2, 24) : number;
     const params = {
       query,
-      number,
+      number: fetchNumber,
       addRecipeNutrition: "true", // Per-serving nutrition for every result.
+      addRecipeInformation: "true", // Ensures dishTypes are present for filtering.
       instructionsRequired: "true",
       sort: query ? "popularity" : "random",
     };
@@ -95,7 +115,18 @@ app.get("/api/search", async (req, res) => {
     if (glutenFree) params.intolerances = "gluten"; // Optional celiac filter.
     if (under500) params.maxCalories = 500; // Calories per serving.
     const data = await spoonFetch("/recipes/complexSearch", params);
-    const results = (data.results || []).map((r) => ({
+
+    let items = data.results || [];
+    if (rule) {
+      items = items.filter((r) => {
+        const dt = (r.dishTypes || []).map((s) => s.toLowerCase());
+        const included = rule.include.some((t) => dt.includes(t));
+        const excluded = rule.exclude.some((t) => dt.includes(t));
+        return included && !excluded;
+      });
+    }
+
+    const results = items.slice(0, number).map((r) => ({
       id: r.id,
       title: r.title,
       image: r.image,

@@ -5,8 +5,9 @@ const PLAN_KEY = "mealPlanner.plan.v2";
 const OLD_WEEK_KEY = "mealPlanner.week.v1";
 
 // plan = { "YYYY-MM-DD" (Monday of the week): [ {recipe}, ... ] }
+const WEEKS_SHOWN = 5; // this week + the next four
 let plan = loadPlan();
-let viewDate = new Date(); // anchor for the month currently shown in the Planner
+let windowStart = startOfWeek(new Date()); // Monday of the first week shown (defaults to this week)
 let targetWeek = weekKeyOf(new Date()); // week new dishes get added to
 let activeCategory = ""; // dish-type filter for search
 let groceryWeek = null; // which week the Grocery tab is currently showing
@@ -79,25 +80,12 @@ function parseKey(key) {
   const [y, m, d] = key.split("-").map(Number);
   return new Date(y, m - 1, d);
 }
-function weeksForMonth(year, month) {
-  const firstOfMonth = new Date(year, month, 1);
-  const lastOfMonth = new Date(year, month + 1, 0);
-  const weeks = [];
-  let cur = startOfWeek(firstOfMonth);
-  while (cur <= lastOfMonth) {
-    weeks.push(new Date(cur));
-    cur = new Date(cur.getFullYear(), cur.getMonth(), cur.getDate() + 7);
-  }
-  return weeks;
-}
 function fmtRange(monday) {
   const sun = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + 6);
   const a = monday.toLocaleDateString(undefined, { month: "short", day: "numeric" });
   const b = sun.toLocaleDateString(undefined, { month: "short", day: "numeric" });
   return `${a} – ${b}`;
 }
-const fmtMonth = (y, m) =>
-  new Date(y, m, 1).toLocaleDateString(undefined, { month: "long", year: "numeric" });
 const isThisWeek = (key) => key === weekKeyOf(new Date());
 
 // ============================================================
@@ -248,22 +236,42 @@ function recipeCard(r, context, weekKey) {
 // ============================================================
 //  Planner (month view)
 // ============================================================
-$("#prevMonth").addEventListener("click", () => {
-  viewDate = new Date(viewDate.getFullYear(), viewDate.getMonth() - 1, 1);
+// Page the 5-week window forward/back, but never earlier than this week.
+function shiftWindow(deltaWeeks) {
+  const floor = startOfWeek(new Date());
+  let d = new Date(
+    windowStart.getFullYear(),
+    windowStart.getMonth(),
+    windowStart.getDate() + deltaWeeks * 7
+  );
+  if (d < floor) d = floor;
+  windowStart = d;
   renderPlanner();
-});
-$("#nextMonth").addEventListener("click", () => {
-  viewDate = new Date(viewDate.getFullYear(), viewDate.getMonth() + 1, 1);
-  renderPlanner();
-});
+}
+$("#prevMonth").addEventListener("click", () => shiftWindow(-WEEKS_SHOWN));
+$("#nextMonth").addEventListener("click", () => shiftWindow(WEEKS_SHOWN));
 
 function renderPlanner() {
-  const year = viewDate.getFullYear();
-  const month = viewDate.getMonth();
-  $("#monthLabel").textContent = fmtMonth(year, month);
+  const weeks = [];
+  for (let i = 0; i < WEEKS_SHOWN; i++) {
+    weeks.push(
+      new Date(windowStart.getFullYear(), windowStart.getMonth(), windowStart.getDate() + i * 7)
+    );
+  }
+  const firstMon = weeks[0];
+  const lastSun = new Date(
+    weeks[WEEKS_SHOWN - 1].getFullYear(),
+    weeks[WEEKS_SHOWN - 1].getMonth(),
+    weeks[WEEKS_SHOWN - 1].getDate() + 6
+  );
+  $("#monthLabel").textContent =
+    `${firstMon.toLocaleDateString(undefined, { month: "short", day: "numeric" })} – ` +
+    `${lastSun.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}`;
+  // Disable "back" when already at this week (can't plan the past).
+  $("#prevMonth").disabled = isoDate(windowStart) === weekKeyOf(new Date());
   weeksContainer.innerHTML = "";
 
-  weeksForMonth(year, month).forEach((monday) => {
+  weeks.forEach((monday) => {
     const key = isoDate(monday);
     const dishes = weekDishes(key);
     const isTarget = key === targetWeek;
