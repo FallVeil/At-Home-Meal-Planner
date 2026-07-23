@@ -173,8 +173,17 @@ async function runSearch() {
     const res = await fetch(`/api/search?${params}`);
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || "Search failed");
+    const staleNote = $("#staleNote");
+    if (data.stale) {
+      staleNote.textContent =
+        "⚠️ Daily recipe limit reached — showing saved recipes from recent browsing.";
+      staleNote.classList.remove("hidden");
+    } else {
+      staleNote.classList.add("hidden");
+    }
     renderResults(data.results);
   } catch (err) {
+    $("#staleNote").classList.add("hidden");
     results.innerHTML = `<div class="empty">😕 ${escapeHtml(err.message)}</div>`;
   }
 }

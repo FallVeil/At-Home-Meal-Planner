@@ -49,6 +49,43 @@ function cacheSet(key, data) {
   cache.set(key, { at: Date.now(), data });
 }
 
+// A running pool of every recipe card we've successfully fetched. When the API
+// is unavailable (e.g. daily quota hit), searches fall back to matching cards
+// from here so the app still shows something useful instead of an error.
+const recipePool = new Map();
+const POOL_MAX = 500;
+function addToPool(r) {
+  recipePool.set(r.id, {
+    id: r.id,
+    title: r.title,
+    image: r.image,
+    readyInMinutes: r.readyInMinutes,
+    servings: r.servings,
+    calories: nutrient(r.nutrition, "Calories"),
+    glutenFree: r.glutenFree,
+    dishTypes: (r.dishTypes || []).map((s) => s.toLowerCase()),
+  });
+  if (recipePool.size > POOL_MAX) {
+    recipePool.delete(recipePool.keys().next().value); // drop oldest
+  }
+}
+// Best-effort matches from the pool, honoring the same filters as a live search.
+function fallbackFromPool({ type, query, glutenFree, under500, number }) {
+  const rule = CATEGORY_FILTERS[type];
+  const q = query.toLowerCase();
+  let items = [...recipePool.values()];
+  if (glutenFree) items = items.filter((r) => r.glutenFree);
+  if (under500) items = items.filter((r) => r.calories != null && r.calories <= 500);
+  if (q) items = items.filter((r) => r.title.toLowerCase().includes(q));
+  if (rule) {
+    items = items.filter((r) => {
+      const dt = r.dishTypes || [];
+      return rule.include.some((t) => dt.includes(t)) && !rule.exclude.some((t) => dt.includes(t));
+    });
+  }
+  return items.slice(0, number).map(({ dishTypes, ...card }) => card);
+}
+
 // Turn raw upstream errors into friendly messages for the UI.
 function friendlyError(e) {
   if (e.status === 402) {
@@ -127,6 +164,7 @@ app.get("/api/search", async (req, res) => {
     if (glutenFree) params.intolerances = "gluten"; // Optional celiac filter.
     if (under500) params.maxCalories = 500; // Calories per serving.
     const data = await spoonFetch("/recipes/complexSearch", params);
+    (data.results || []).forEach(addToPool); // remember these for offline fallback
 
     let items = data.results || [];
     if (rule) {
@@ -151,6 +189,11 @@ app.get("/api/search", async (req, res) => {
     cacheSet(cacheKey, payload);
     res.json(payload);
   } catch (e) {
+    // API unavailable (e.g. quota): serve matching saved recipes if we have any.
+    const fallback = fallbackFromPool({ type, query, glutenFree, under500, number });
+    if (fallback.length) {
+      return res.json({ results: fallback, stale: true });
+    }
     res.status(e.status || 500).json({ error: friendlyError(e) });
   }
 });
