@@ -49,6 +49,17 @@ function cacheSet(key, data) {
   cache.set(key, { at: Date.now(), data });
 }
 
+// Turn raw upstream errors into friendly messages for the UI.
+function friendlyError(e) {
+  if (e.status === 402) {
+    return "Daily recipe limit reached on the free Spoonacular plan. It resets once a day — please try again tomorrow.";
+  }
+  if (e.status === 401) {
+    return "The Spoonacular API key was rejected. Double-check SPOONACULAR_API_KEY.";
+  }
+  return e.message || "Something went wrong fetching recipes.";
+}
+
 function requireKey(res) {
   if (!API_KEY || API_KEY === "your_key_here") {
     res.status(503).json({
@@ -100,8 +111,9 @@ app.get("/api/search", async (req, res) => {
   if (cached) return res.json(cached);
   try {
     const rule = CATEGORY_FILTERS[type];
-    // Over-fetch when we'll post-filter a category, so enough survive.
-    const fetchNumber = rule ? Math.min(number * 2, 24) : number;
+    // Over-fetch a little when we'll post-filter a category, so enough survive
+    // — but keep it modest to conserve the daily API quota.
+    const fetchNumber = rule ? Math.min(number + 6, 18) : number;
     const params = {
       query,
       number: fetchNumber,
@@ -139,7 +151,7 @@ app.get("/api/search", async (req, res) => {
     cacheSet(cacheKey, payload);
     res.json(payload);
   } catch (e) {
-    res.status(e.status || 500).json({ error: e.message });
+    res.status(e.status || 500).json({ error: friendlyError(e) });
   }
 });
 
@@ -176,7 +188,7 @@ app.get("/api/recipes", async (req, res) => {
     // Preserve requested order.
     res.json({ recipes: ids.map((id) => recipes[id]).filter(Boolean) });
   } catch (e) {
-    res.status(e.status || 500).json({ error: e.message });
+    res.status(e.status || 500).json({ error: friendlyError(e) });
   }
 });
 
