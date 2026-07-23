@@ -57,6 +57,32 @@ function removeFromWeek(key, id) {
   savePlan();
 }
 
+// ---- Favorites (saved recipes, shown in their own tab) ----
+const FAV_KEY = "mealPlanner.favorites.v1";
+let favorites = loadFavorites();
+function loadFavorites() {
+  try {
+    const f = JSON.parse(localStorage.getItem(FAV_KEY));
+    return Array.isArray(f) ? f : [];
+  } catch {
+    return [];
+  }
+}
+function saveFavorites() {
+  localStorage.setItem(FAV_KEY, JSON.stringify(favorites));
+  updateFavCount();
+}
+const isFavorite = (id) => favorites.some((r) => String(r.id) === String(id));
+function toggleFavorite(recipe) {
+  if (isFavorite(recipe.id)) {
+    favorites = favorites.filter((r) => String(r.id) !== String(recipe.id));
+  } else {
+    favorites.push(recipe);
+  }
+  saveFavorites();
+  return isFavorite(recipe.id);
+}
+
 // ============================================================
 //  Date helpers (weeks start Monday)
 // ============================================================
@@ -110,6 +136,7 @@ function activateTab(name) {
     .forEach((p) => p.classList.toggle("active", p.id === `tab-${name}`));
   if (name === "plan") renderPlanner();
   if (name === "search") updateTargetBanner();
+  if (name === "favorites") renderFavorites();
 }
 
 // ============================================================
@@ -119,7 +146,6 @@ $("#searchForm").addEventListener("submit", (e) => {
   e.preventDefault();
   runSearch();
 });
-$("#dietSelect").addEventListener("change", runSearch);
 $("#calFilter").addEventListener("change", runSearch);
 $("#gfFilter").addEventListener("change", runSearch);
 
@@ -136,12 +162,11 @@ document.querySelectorAll("#categoryChips .chip").forEach((chip) => {
 
 async function runSearch() {
   const query = $("#searchInput").value.trim();
-  const diet = $("#dietSelect").value;
   const under500 = $("#calFilter").checked;
   const gf = $("#gfFilter").checked;
   results.innerHTML = `<div class="loading"><div class="spinner"></div>Searching recipes…</div>`;
   try {
-    const params = new URLSearchParams({ query, diet, number: "12" });
+    const params = new URLSearchParams({ query, number: "12" });
     if (activeCategory) params.set("type", activeCategory);
     if (under500) params.set("under500", "1");
     if (gf) params.set("gf", "1");
@@ -230,7 +255,45 @@ function recipeCard(r, context, weekKey) {
     });
     actions.appendChild(add);
   }
+
+  // Favorite star, overlaid on the image (available in every context).
+  const star = document.createElement("button");
+  star.className = "fav-star" + (isFavorite(r.id) ? " on" : "");
+  star.setAttribute("aria-label", "Toggle favorite");
+  star.textContent = isFavorite(r.id) ? "★" : "☆";
+  star.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const nowFav = toggleFavorite({
+      id: r.id,
+      title: r.title,
+      image: r.image,
+      readyInMinutes: r.readyInMinutes,
+      servings: r.servings,
+      calories: r.calories,
+    });
+    star.classList.toggle("on", nowFav);
+    star.textContent = nowFav ? "★" : "☆";
+    toast(nowFav ? `Favorited “${r.title}”` : `Unfavorited “${r.title}”`);
+    // On the Favorites tab, remove the card immediately when unfavorited.
+    if (!nowFav && $("#tab-favorites").classList.contains("active")) {
+      card.remove();
+      if (!favorites.length) renderFavorites();
+    }
+  });
+  card.appendChild(star);
+
   return card;
+}
+
+function renderFavorites() {
+  const list = $("#favList");
+  list.innerHTML = "";
+  if (!favorites.length) {
+    $("#favEmpty").classList.remove("hidden");
+    return;
+  }
+  $("#favEmpty").classList.add("hidden");
+  favorites.forEach((r) => list.appendChild(recipeCard(r, "search")));
 }
 
 // ============================================================
@@ -281,7 +344,7 @@ function renderPlanner() {
     block.innerHTML = `
       <div class="week-head">
         <div class="week-title">
-          <strong>${isThisWeek(key) ? "This week" : "Week of"} ${escapeHtml(fmtRange(monday))}</strong>
+          <strong>${escapeHtml(fmtRange(monday))}</strong>
           <span class="count">${dishes.length} dish${dishes.length === 1 ? "" : "es"}${isTarget ? " · adding here" : ""}</span>
         </div>
         <div class="week-head-actions">
@@ -475,7 +538,22 @@ async function showRecipe(id) {
       }
       <div class="card-actions" style="margin-top:16px">
         <button class="add-btn${added ? " added" : ""}" id="modalAdd">${added ? "✓ Added" : "＋ Add to plan"}</button>
+        <button class="ghost fav-btn${isFavorite(r.id) ? " on" : ""}" id="modalFav">${isFavorite(r.id) ? "★ Favorited" : "☆ Favorite"}</button>
       </div>`;
+    $("#modalFav").addEventListener("click", () => {
+      const nowFav = toggleFavorite({
+        id: r.id,
+        title: r.title,
+        image: r.image,
+        readyInMinutes: r.readyInMinutes,
+        servings: r.servings,
+        calories: n ? n.calories : undefined,
+      });
+      const b = $("#modalFav");
+      b.classList.toggle("on", nowFav);
+      b.textContent = nowFav ? "★ Favorited" : "☆ Favorite";
+      toast(nowFav ? `Favorited “${r.title}”` : `Unfavorited “${r.title}”`);
+    });
     const addBtn = $("#modalAdd");
     addBtn.addEventListener("click", () => {
       if (inWeek(targetWeek, r.id)) return;
@@ -502,6 +580,10 @@ async function showRecipe(id) {
 // ============================================================
 function updatePlanCount() {
   $("#planCount").textContent = totalDishes();
+}
+function updateFavCount() {
+  const el = $("#favCount");
+  if (el) el.textContent = favorites.length;
 }
 function toast(msg) {
   const el = $("#toast");
@@ -539,6 +621,7 @@ function placeholder() {
 // ============================================================
 async function init() {
   updatePlanCount();
+  updateFavCount();
   updateTargetBanner();
   renderPlanner();
   try {

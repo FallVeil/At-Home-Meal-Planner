@@ -11,9 +11,10 @@
     <header class="topbar">
       <h1>🍽️ At-Home Meal Planner</h1>
       <nav class="tabs">
-        <button class="tab" data-tab="search">Find Recipes</button>
         <button class="tab active" data-tab="plan">Planner <span id="planCount" class="pill">0</span></button>
+        <button class="tab" data-tab="search">Find Recipes</button>
         <button class="tab" data-tab="grocery">Grocery List</button>
+        <button class="tab" data-tab="favorites">★ Favorites <span id="favCount" class="pill">0</span></button>
       </nav>
     </header>
 
@@ -40,14 +41,6 @@
                 placeholder="Search dishes, ingredients… e.g. chicken pasta, tacos, salmon"
                 autocomplete="off"
               />
-              <select id="dietSelect" title="Extra dietary filter">
-                <option value="">Any diet</option>
-                <option value="vegetarian">Vegetarian</option>
-                <option value="vegan">Vegan</option>
-                <option value="dairy free">Dairy free</option>
-                <option value="pescetarian">Pescetarian</option>
-                <option value="ketogenic">Keto</option>
-              </select>
               <button type="submit">Search</button>
             </form>
             <div class="filters">
@@ -94,6 +87,18 @@
         <div id="groceryList"></div>
         <div id="groceryEmpty" class="empty">
           Go to the <strong>Planner</strong>, add dishes to a week, then tap that week's <strong>🛒 List</strong>.
+        </div>
+      </section>
+
+      <!-- FAVORITES -->
+      <section id="tab-favorites" class="panel">
+        <div class="section-head">
+          <h2>★ Favorite recipes</h2>
+        </div>
+        <p class="hint">Your saved recipes. Tap <strong>＋ Add to plan</strong> to drop one into the selected week.</p>
+        <div id="favList" class="card-grid"></div>
+        <div id="favEmpty" class="empty">
+          No favorites yet. Tap the ☆ on any recipe to save it here.
         </div>
       </section>
     </main>
