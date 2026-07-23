@@ -1,5 +1,6 @@
 import express from "express";
 import dotenv from "dotenv";
+import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -52,8 +53,13 @@ function cacheSet(key, data) {
 // A running pool of every recipe card we've successfully fetched. When the API
 // is unavailable (e.g. daily quota hit), searches fall back to matching cards
 // from here so the app still shows something useful instead of an error.
+// It's persisted to disk and kept for 24h, so the home screen still has recipes
+// after the server sleeps/restarts.
 const recipePool = new Map();
 const POOL_MAX = 500;
+const POOL_TTL = 1000 * 60 * 60 * 24; // 24 hours
+const POOL_FILE = path.join(__dirname, "pool-cache.json");
+
 function addToPool(r) {
   recipePool.set(r.id, {
     id: r.id,
@@ -64,16 +70,20 @@ function addToPool(r) {
     calories: nutrient(r.nutrition, "Calories"),
     glutenFree: r.glutenFree,
     dishTypes: (r.dishTypes || []).map((s) => s.toLowerCase()),
+    _t: Date.now(), // when we last saw it (for the 24h window)
   });
   if (recipePool.size > POOL_MAX) {
     recipePool.delete(recipePool.keys().next().value); // drop oldest
   }
+  schedulePoolSave();
 }
+
 // Best-effort matches from the pool, honoring the same filters as a live search.
 function fallbackFromPool({ type, query, glutenFree, under500, number }) {
   const rule = CATEGORY_FILTERS[type];
   const q = query.toLowerCase();
-  let items = [...recipePool.values()];
+  const now = Date.now();
+  let items = [...recipePool.values()].filter((r) => now - (r._t || 0) < POOL_TTL);
   if (glutenFree) items = items.filter((r) => r.glutenFree);
   if (under500) items = items.filter((r) => r.calories != null && r.calories <= 500);
   if (q) items = items.filter((r) => r.title.toLowerCase().includes(q));
@@ -83,7 +93,33 @@ function fallbackFromPool({ type, query, glutenFree, under500, number }) {
       return rule.include.some((t) => dt.includes(t)) && !rule.exclude.some((t) => dt.includes(t));
     });
   }
-  return items.slice(0, number).map(({ dishTypes, ...card }) => card);
+  return items.slice(0, number).map(({ dishTypes, _t, ...card }) => card);
+}
+
+// Load the saved pool on startup, dropping anything older than 24h.
+function loadPoolFromDisk() {
+  try {
+    const arr = JSON.parse(fs.readFileSync(POOL_FILE, "utf8"));
+    const now = Date.now();
+    for (const r of arr) {
+      if (r && r.id != null && now - (r._t || 0) < POOL_TTL) recipePool.set(r.id, r);
+    }
+    if (recipePool.size) console.log(`  Loaded ${recipePool.size} saved recipes (pool cache).`);
+  } catch {
+    /* no cache file yet — fine */
+  }
+}
+
+// Persist the pool, debounced so bursts of adds write at most once every few seconds.
+let poolSaveTimer = null;
+function schedulePoolSave() {
+  if (poolSaveTimer) return;
+  poolSaveTimer = setTimeout(() => {
+    poolSaveTimer = null;
+    const now = Date.now();
+    const fresh = [...recipePool.values()].filter((r) => now - (r._t || 0) < POOL_TTL);
+    fs.writeFile(POOL_FILE, JSON.stringify(fresh), () => {});
+  }, 3000);
 }
 
 // Turn raw upstream errors into friendly messages for the UI.
@@ -269,6 +305,8 @@ function normalizeRecipe(r) {
     })),
   };
 }
+
+loadPoolFromDisk();
 
 app.listen(PORT, () => {
   console.log(`\n  🍽  At-Home Meal Planner running at http://localhost:${PORT}\n`);
