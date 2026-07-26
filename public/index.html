@@ -86,6 +86,21 @@
           </div>
         </div>
         <p id="groceryMeta" class="hint"></p>
+        <div id="groceryControls" class="grocery-controls hidden">
+          <form id="addItemForm" class="add-item">
+            <input
+              id="addItemInput"
+              type="text"
+              placeholder="Add an item… e.g. milk, paper towels"
+              autocomplete="off"
+            />
+            <button type="submit">Add</button>
+          </form>
+          <label class="cal-toggle">
+            <input type="checkbox" id="hideStaples" checked />
+            Hide staples (salt, oil, water…)
+          </label>
+        </div>
         <div id="groceryList"></div>
         <div id="groceryEmpty" class="empty">
           Go to the <strong>Planner</strong>, add dishes to a week, then tap that week's <strong>🛒 List</strong>.

@@ -231,6 +231,23 @@ app.put("/api/favorites", async (req, res) => {
     res.status(502).json({ error: "Could not save favorites." });
   }
 });
+app.get("/api/grocery", async (req, res) => {
+  if (!storageEnabled) return res.json({ enabled: false });
+  try {
+    res.json({ enabled: true, grocery: (await redisGetJSON("meal:grocery")) || {} });
+  } catch {
+    res.status(502).json({ error: "Could not read grocery state." });
+  }
+});
+app.put("/api/grocery", async (req, res) => {
+  if (!storageEnabled) return res.json({ enabled: false });
+  try {
+    await redisSetJSON("meal:grocery", req.body?.grocery || {});
+    res.json({ ok: true });
+  } catch {
+    res.status(502).json({ error: "Could not save grocery state." });
+  }
+});
 
 // Search recipes by title/keyword, optionally within a dish-type category.
 //   type=appetizer|soup|salad|main course -> category filter
@@ -362,6 +379,20 @@ function summarizeNutrition(nutrition) {
   };
 }
 
+function recipeSteps(r) {
+  // Prefer Spoonacular's structured steps; fall back to plain-text instructions.
+  const analyzed = r.analyzedInstructions?.[0]?.steps;
+  if (analyzed && analyzed.length) return analyzed.map((s) => s.step).filter(Boolean);
+  if (r.instructions) {
+    return r.instructions
+      .replace(/<[^>]+>/g, " ") // strip HTML tags
+      .split(/\.\s+|\n+/)
+      .map((s) => s.trim())
+      .filter((s) => s.length > 2);
+  }
+  return [];
+}
+
 function normalizeRecipe(r) {
   return {
     id: r.id,
@@ -372,6 +403,7 @@ function normalizeRecipe(r) {
     sourceUrl: r.sourceUrl,
     glutenFree: r.glutenFree,
     nutrition: summarizeNutrition(r.nutrition),
+    steps: recipeSteps(r),
     ingredients: (r.extendedIngredients || []).map((i) => ({
       name: i.nameClean || i.name,
       amount: i.amount,

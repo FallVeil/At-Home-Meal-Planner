@@ -117,9 +117,10 @@ function scheduleFavPush() {
 async function refreshFromServer() {
   if (!syncEnabled) return;
   try {
-    const [pr, fr] = await Promise.all([
+    const [pr, fr, gr] = await Promise.all([
       fetch("/api/plan").then((r) => r.json()),
       fetch("/api/favorites").then((r) => r.json()),
+      fetch("/api/grocery").then((r) => r.json()),
     ]);
     if (pr.enabled && pr.plan) {
       plan = pr.plan;
@@ -131,8 +132,15 @@ async function refreshFromServer() {
       localStorage.setItem(FAV_KEY, JSON.stringify(favorites));
       updateFavCount();
     }
+    if (gr.enabled && gr.grocery) {
+      grocery = gr.grocery;
+      localStorage.setItem(GROCERY_KEY, JSON.stringify(grocery));
+    }
     if ($("#tab-plan").classList.contains("active")) renderPlanner();
     if ($("#tab-favorites").classList.contains("active")) renderFavorites();
+    if ($("#tab-grocery").classList.contains("active") && lastGroceryRecipes.length && groceryWeek) {
+      renderGrocery(lastGroceryRecipes, groceryWeek);
+    }
   } catch {
     /* offline/transient — keep local copy */
   }
@@ -142,9 +150,10 @@ async function refreshFromServer() {
 async function initSync() {
   if (!syncEnabled) return;
   try {
-    const [pr, fr] = await Promise.all([
+    const [pr, fr, gr] = await Promise.all([
       fetch("/api/plan").then((r) => r.json()),
       fetch("/api/favorites").then((r) => r.json()),
+      fetch("/api/grocery").then((r) => r.json()),
     ]);
     if (pr.enabled) {
       const serverPlan = pr.plan || {};
@@ -162,6 +171,15 @@ async function initSync() {
         localStorage.setItem(FAV_KEY, JSON.stringify(favorites));
       } else if (favorites.length) {
         scheduleFavPush();
+      }
+    }
+    if (gr.enabled) {
+      const serverGrocery = gr.grocery || {};
+      if (Object.keys(serverGrocery).length) {
+        grocery = serverGrocery;
+        localStorage.setItem(GROCERY_KEY, JSON.stringify(grocery));
+      } else if (Object.keys(grocery).length) {
+        scheduleGroceryPush();
       }
     }
     updatePlanCount();
@@ -232,6 +250,7 @@ function activateTab(name) {
     renderFavorites();
     refreshFromServer();
   }
+  if (name === "grocery") refreshFromServer();
 }
 
 // Pull the latest shared data when the app regains focus (e.g. you switch back
@@ -520,14 +539,60 @@ function renderPlanner() {
 }
 
 // ============================================================
-//  Grocery list (per week)
+//  Grocery list (per week): combined ingredients + your own items,
+//  with persistent, synced check-offs and pantry-staple hiding
 // ============================================================
+const GROCERY_KEY = "mealPlanner.grocery.v1";
+let grocery = loadGrocery(); // { [weekKey]: { checked: {itemKey:true}, extras: [{id,name,checked}] } }
+let lastGroceryRecipes = [];
+let groceryPushTimer = null;
+
+function loadGrocery() {
+  try {
+    const g = JSON.parse(localStorage.getItem(GROCERY_KEY));
+    return g && typeof g === "object" && !Array.isArray(g) ? g : {};
+  } catch {
+    return {};
+  }
+}
+function saveGrocery() {
+  localStorage.setItem(GROCERY_KEY, JSON.stringify(grocery));
+  scheduleGroceryPush();
+}
+function scheduleGroceryPush() {
+  if (!syncEnabled) return;
+  clearTimeout(groceryPushTimer);
+  groceryPushTimer = setTimeout(() => {
+    fetch("/api/grocery", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ grocery }),
+    }).catch(() => {});
+  }, 700);
+}
+function weekGrocery(weekKey) {
+  const w = (grocery[weekKey] ||= { checked: {}, extras: [] });
+  w.checked ||= {};
+  w.extras ||= [];
+  return w;
+}
+
+// Common pantry items most people already have — hidden by default.
+const STAPLE_PATTERNS = [
+  /^salt$/, /salt and pepper/, /kosher salt/, /sea salt/, /table salt/,
+  /^pepper$/, /black pepper/, /white pepper/, /ground pepper/, /peppercorn/,
+  /^water$/, /(cold|warm|hot|lukewarm) water/,
+  /olive oil/, /vegetable oil/, /canola oil/, /^oil$/, /cooking spray/,
+];
+const isStaple = (name) => STAPLE_PATTERNS.some((re) => re.test(name.toLowerCase().trim()));
+
 async function buildGrocery(weekKey) {
   const dishes = weekDishes(weekKey);
   if (!dishes.length) return;
   groceryWeek = weekKey;
   activateTab("grocery");
   groceryEmpty.classList.add("hidden");
+  $("#groceryControls").classList.add("hidden");
   groceryList.innerHTML = `<div class="loading"><div class="spinner"></div>Building your grocery list…</div>`;
   groceryMeta.textContent = "";
   try {
@@ -542,17 +607,26 @@ async function buildGrocery(weekKey) {
 }
 
 function renderGrocery(recipes, weekKey) {
-  // Combine ingredients across all recipes, keyed on name + unit so
-  // "2 cup" + "1 cup" sum, but "cloves" vs "cup" stay separate.
+  lastGroceryRecipes = recipes;
+  groceryWeek = weekKey;
+  const wk = weekGrocery(weekKey);
+  const hideStaples = $("#hideStaples").checked;
+
+  // Combine ingredients (name + unit), skipping staples when hidden.
   const combined = new Map();
+  let hiddenCount = 0;
   recipes.forEach((recipe) => {
     (recipe.ingredients || []).forEach((ing) => {
       const name = (ing.name || "").trim();
       if (!name) return;
+      if (hideStaples && isStaple(name)) {
+        hiddenCount++;
+        return;
+      }
       const unit = (ing.unit || "").trim().toLowerCase();
       const key = `${name.toLowerCase()}|${unit}`;
       if (!combined.has(key)) {
-        combined.set(key, { name, unit, amount: 0, aisle: ing.aisle || "Other", usedIn: new Set() });
+        combined.set(key, { key, name, unit, amount: 0, aisle: ing.aisle || "Other", usedIn: new Set() });
       }
       const entry = combined.get(key);
       entry.amount += Number(ing.amount) || 0;
@@ -560,51 +634,107 @@ function renderGrocery(recipes, weekKey) {
     });
   });
 
-  if (!combined.size) {
-    groceryList.innerHTML = `<div class="empty">No ingredients found for these recipes.</div>`;
-    return;
-  }
-
-  const byAisle = {};
-  for (const item of combined.values()) (byAisle[item.aisle] ||= []).push(item);
-  const aisleOrder = Object.keys(byAisle).sort((a, b) => {
-    if (a === "Other") return 1;
-    if (b === "Other") return -1;
-    return a.localeCompare(b);
-  });
-
   groceryList.innerHTML = "";
-  aisleOrder.forEach((aisle) => {
+  $("#groceryControls").classList.remove("hidden");
+
+  // Your own items first.
+  if (wk.extras.length) {
     const section = document.createElement("div");
     section.className = "aisle";
-    section.innerHTML = `<h3>${escapeHtml(aisle)}</h3>`;
-    byAisle[aisle]
-      .sort((a, b) => a.name.localeCompare(b.name))
-      .forEach((item) => section.appendChild(groceryRow(item)));
+    section.innerHTML = `<h3>Added items</h3>`;
+    wk.extras.forEach((extra) => section.appendChild(extraRow(extra, weekKey)));
     groceryList.appendChild(section);
-  });
+  }
 
-  const monday = parseKey(weekKey);
-  const weekLabel = isThisWeek(weekKey) ? "this week" : `week of ${fmtRange(monday)}`;
-  groceryMeta.textContent = `${weekLabel} — ${combined.size} items for ${recipes.length} dish${recipes.length === 1 ? "" : "es"}. Tap an item to check it off.`;
+  // Recipe ingredients grouped by aisle.
+  const byAisle = {};
+  for (const item of combined.values()) (byAisle[item.aisle] ||= []).push(item);
+  Object.keys(byAisle)
+    .sort((a, b) => (a === "Other" ? 1 : b === "Other" ? -1 : a.localeCompare(b)))
+    .forEach((aisle) => {
+      const section = document.createElement("div");
+      section.className = "aisle";
+      section.innerHTML = `<h3>${escapeHtml(aisle)}</h3>`;
+      byAisle[aisle]
+        .sort((a, b) => a.name.localeCompare(b.name))
+        .forEach((item) => section.appendChild(groceryRow(item, weekKey)));
+      groceryList.appendChild(section);
+    });
+
+  if (!groceryList.children.length) {
+    groceryList.innerHTML = `<div class="empty">No items to buy — add your own above.</div>`;
+  }
+
+  const weekLabel = isThisWeek(weekKey) ? "this week" : `week of ${fmtRange(parseKey(weekKey))}`;
+  const staplesNote =
+    hideStaples && hiddenCount ? ` · ${hiddenCount} staple${hiddenCount === 1 ? "" : "s"} hidden` : "";
+  groceryMeta.textContent = `${weekLabel} — ${combined.size} item${combined.size === 1 ? "" : "s"} for ${recipes.length} dish${recipes.length === 1 ? "" : "es"}${staplesNote}. Tap an item to check it off.`;
 }
 
-function groceryRow(item) {
+function groceryRow(item, weekKey) {
+  const wk = weekGrocery(weekKey);
   const row = document.createElement("div");
-  row.className = "grocery-item";
+  const isChecked = Boolean(wk.checked[item.key]);
+  row.className = "grocery-item" + (isChecked ? " checked" : "");
   const id = "gi-" + Math.random().toString(36).slice(2);
   const qty = formatQty(item.amount, item.unit);
   const usedIn = [...item.usedIn].join(", ");
   row.innerHTML = `
-    <input type="checkbox" id="${id}" />
+    <input type="checkbox" id="${id}" ${isChecked ? "checked" : ""} />
     <label for="${id}">
       <span class="qty">${qty ? qty + " " : ""}</span>${escapeHtml(capitalize(item.name))}
     </label>
     <span class="used" title="Used in: ${escapeHtml(usedIn)}">${escapeHtml(usedIn)}</span>`;
   const cb = row.querySelector("input");
-  cb.addEventListener("change", () => row.classList.toggle("checked", cb.checked));
+  cb.addEventListener("change", () => {
+    row.classList.toggle("checked", cb.checked);
+    if (cb.checked) wk.checked[item.key] = true;
+    else delete wk.checked[item.key];
+    saveGrocery();
+  });
   return row;
 }
+
+function extraRow(extra, weekKey) {
+  const wk = weekGrocery(weekKey);
+  const row = document.createElement("div");
+  row.className = "grocery-item" + (extra.checked ? " checked" : "");
+  const id = "ex-" + extra.id;
+  row.innerHTML = `
+    <input type="checkbox" id="${id}" ${extra.checked ? "checked" : ""} />
+    <label for="${id}">${escapeHtml(capitalize(extra.name))}</label>
+    <button class="extra-remove" aria-label="Remove item">✕</button>`;
+  row.querySelector("input").addEventListener("change", (e) => {
+    extra.checked = e.target.checked;
+    row.classList.toggle("checked", e.target.checked);
+    saveGrocery();
+  });
+  row.querySelector(".extra-remove").addEventListener("click", () => {
+    wk.extras = wk.extras.filter((x) => x.id !== extra.id);
+    saveGrocery();
+    renderGrocery(lastGroceryRecipes, weekKey);
+  });
+  return row;
+}
+
+// Add-your-own-item + hide-staples controls.
+$("#addItemForm").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const input = $("#addItemInput");
+  const name = input.value.trim();
+  if (!name || !groceryWeek) return;
+  weekGrocery(groceryWeek).extras.push({
+    id: Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
+    name,
+    checked: false,
+  });
+  saveGrocery();
+  input.value = "";
+  renderGrocery(lastGroceryRecipes, groceryWeek);
+});
+$("#hideStaples").addEventListener("change", () => {
+  if (groceryWeek) renderGrocery(lastGroceryRecipes, groceryWeek);
+});
 
 $("#copyList").addEventListener("click", () => {
   const lines = [];
@@ -679,8 +809,14 @@ async function showRecipe(id) {
         ${(r.ingredients || []).map((i) => `<li>${escapeHtml(i.original || i.name)}</li>`).join("")}
       </ul>
       ${
+        r.steps && r.steps.length
+          ? `<h3>How to make it</h3>
+             <ol class="steps">${r.steps.map((s) => `<li>${escapeHtml(s)}</li>`).join("")}</ol>`
+          : ""
+      }
+      ${
         r.sourceUrl
-          ? `<p><a href="${r.sourceUrl}" target="_blank" rel="noopener">View full recipe & instructions →</a></p>`
+          ? `<p><a href="${r.sourceUrl}" target="_blank" rel="noopener">View original recipe →</a></p>`
           : ""
       }
       <div class="card-actions" style="margin-top:16px">
