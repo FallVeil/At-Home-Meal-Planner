@@ -160,19 +160,41 @@ document.querySelectorAll("#categoryChips .chip").forEach((chip) => {
   });
 });
 
+// Snapshot of the active search so "load more" repeats the same filters.
+let currentSearch = null;
+let searchOffset = 0;
+let searchHasMore = false;
+
 async function runSearch() {
-  const query = $("#searchInput").value.trim();
-  const under500 = $("#calFilter").checked;
-  const gf = $("#gfFilter").checked;
+  currentSearch = {
+    query: $("#searchInput").value.trim(),
+    type: activeCategory,
+    gf: $("#gfFilter").checked,
+    under500: $("#calFilter").checked,
+  };
+  searchOffset = 0;
+  searchHasMore = false;
   results.innerHTML = `<div class="loading"><div class="spinner"></div>Searching recipes…</div>`;
+  await fetchSearchPage(true);
+}
+
+async function fetchSearchPage(reset) {
+  const p = currentSearch;
+  const params = new URLSearchParams({ query: p.query, number: "12", offset: String(searchOffset) });
+  if (p.type) params.set("type", p.type);
+  if (p.under500) params.set("under500", "1");
+  if (p.gf) params.set("gf", "1");
+
+  const btn = $("#loadMore");
+  if (!reset && btn) {
+    btn.disabled = true;
+    btn.textContent = "Loading…";
+  }
   try {
-    const params = new URLSearchParams({ query, number: "12" });
-    if (activeCategory) params.set("type", activeCategory);
-    if (under500) params.set("under500", "1");
-    if (gf) params.set("gf", "1");
     const res = await fetch(`/api/search?${params}`);
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || "Search failed");
+
     const staleNote = $("#staleNote");
     if (data.stale) {
       staleNote.textContent =
@@ -181,21 +203,36 @@ async function runSearch() {
     } else {
       staleNote.classList.add("hidden");
     }
-    renderResults(data.results);
+
+    if (reset) results.innerHTML = "";
+    if (reset && (!data.results || !data.results.length)) {
+      results.innerHTML = `<div class="empty">No recipes found. Try a different search or category.</div>`;
+    } else {
+      (data.results || []).forEach((r) => results.appendChild(recipeCard(r, "search")));
+    }
+    searchOffset = data.nextOffset ?? searchOffset + 12;
+    searchHasMore = Boolean(data.hasMore);
+    renderLoadMore();
   } catch (err) {
-    $("#staleNote").classList.add("hidden");
-    results.innerHTML = `<div class="empty">😕 ${escapeHtml(err.message)}</div>`;
+    if (reset) {
+      $("#staleNote").classList.add("hidden");
+      results.innerHTML = `<div class="empty">😕 ${escapeHtml(err.message)}</div>`;
+    } else {
+      toast("Couldn't load more recipes.");
+    }
+    searchHasMore = false;
+    renderLoadMore();
   }
 }
 
-function renderResults(list) {
-  if (!list || !list.length) {
-    results.innerHTML = `<div class="empty">No recipes found. Try a different search or category.</div>`;
-    return;
-  }
-  results.innerHTML = "";
-  list.forEach((r) => results.appendChild(recipeCard(r, "search")));
+function renderLoadMore() {
+  const btn = $("#loadMore");
+  if (!btn) return;
+  btn.disabled = false;
+  btn.textContent = "Load more recipes";
+  btn.classList.toggle("hidden", !searchHasMore);
 }
+$("#loadMore").addEventListener("click", () => fetchSearchPage(false));
 
 function updateTargetBanner() {
   const banner = $("#targetBanner");

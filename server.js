@@ -179,7 +179,8 @@ app.get("/api/search", async (req, res) => {
   const under500 = ["1", "true", "yes"].includes(
     (req.query.under500 || "").toString().toLowerCase()
   );
-  const cacheKey = `search:${type}:${query}:${diet}:${glutenFree}:${under500}:${number}`;
+  const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0); // for "load more"
+  const cacheKey = `search:${type}:${query}:${diet}:${glutenFree}:${under500}:${number}:${offset}`;
   const cached = cacheGet(cacheKey);
   if (cached) return res.json(cached);
   try {
@@ -190,10 +191,11 @@ app.get("/api/search", async (req, res) => {
     const params = {
       query,
       number: fetchNumber,
+      offset,
       addRecipeNutrition: "true", // Per-serving nutrition for every result.
       addRecipeInformation: "true", // Ensures dishTypes are present for filtering.
       instructionsRequired: "true",
-      sort: query ? "popularity" : "random",
+      sort: "popularity", // stable order so "load more" (offset) paginates cleanly
     };
     if (type) params.type = type; // e.g. "salad", "soup", "appetizer", "main course"
     if (diet) params.diet = diet;
@@ -221,14 +223,19 @@ app.get("/api/search", async (req, res) => {
       calories: nutrient(r.nutrition, "Calories"),
       glutenFree: r.glutenFree,
     }));
-    const payload = { results };
+    const nextOffset = offset + fetchNumber;
+    const hasMore = nextOffset < (data.totalResults || 0);
+    const payload = { results, hasMore, nextOffset };
     cacheSet(cacheKey, payload);
     res.json(payload);
   } catch (e) {
-    // API unavailable (e.g. quota): serve matching saved recipes if we have any.
-    const fallback = fallbackFromPool({ type, query, glutenFree, under500, number });
-    if (fallback.length) {
-      return res.json({ results: fallback, stale: true });
+    // API unavailable (e.g. quota): on the first page, serve matching saved
+    // recipes if we have any. "Load more" (offset > 0) has nothing more offline.
+    if (offset === 0) {
+      const fallback = fallbackFromPool({ type, query, glutenFree, under500, number });
+      if (fallback.length) {
+        return res.json({ results: fallback, stale: true, hasMore: false });
+      }
     }
     res.status(e.status || 500).json({ error: friendlyError(e) });
   }

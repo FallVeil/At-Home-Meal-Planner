@@ -116,6 +116,22 @@ main { max-width: 1000px; margin: 0 auto; padding: 22px 20px 80px; }
 }
 .target-banner .muted-note { color: var(--muted); font-weight: 400; font-size: 0.83rem; }
 
+/* "Load more recipes" button under the results grid */
+.load-more {
+  display: block;
+  margin: 22px auto 0;
+  padding: 12px 26px;
+  background: var(--card);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  font-size: 0.98rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.load-more:hover:not(:disabled) { background: var(--bg); border-color: var(--accent); color: var(--accent); }
+.load-more:disabled { opacity: 0.6; cursor: default; }
+
 /* "Showing saved recipes" notice when the API is unavailable */
 .stale-note {
   margin: 10px 0;
