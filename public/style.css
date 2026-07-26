@@ -221,7 +221,9 @@ main { max-width: 1000px; margin: 0 auto; padding: 22px 20px 80px; }
   border-radius: 10px;
   font-size: 1rem;
   background: var(--card);
+  color: var(--ink);
 }
+.search-bar input[type="search"]::placeholder { color: var(--muted); }
 .search-bar select {
   padding: 12px 10px;
   border: 1px solid var(--line);

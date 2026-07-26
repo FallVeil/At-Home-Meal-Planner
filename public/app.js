@@ -36,6 +36,7 @@ function loadPlan() {
 function savePlan() {
   localStorage.setItem(PLAN_KEY, JSON.stringify(plan));
   updatePlanCount();
+  schedulePlanPush();
 }
 const weekDishes = (key) => plan[key] || [];
 const inWeek = (key, id) => weekDishes(key).some((r) => String(r.id) === String(id));
@@ -71,6 +72,7 @@ function loadFavorites() {
 function saveFavorites() {
   localStorage.setItem(FAV_KEY, JSON.stringify(favorites));
   updateFavCount();
+  scheduleFavPush();
 }
 const isFavorite = (id) => favorites.some((r) => String(r.id) === String(id));
 function toggleFavorite(recipe) {
@@ -81,6 +83,93 @@ function toggleFavorite(recipe) {
   }
   saveFavorites();
   return isFavorite(recipe.id);
+}
+
+// ---- Cross-device sync (active only when the server has shared storage) ----
+let syncEnabled = false;
+let planPushTimer = null;
+let favPushTimer = null;
+
+function schedulePlanPush() {
+  if (!syncEnabled) return;
+  clearTimeout(planPushTimer);
+  planPushTimer = setTimeout(() => {
+    fetch("/api/plan", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ plan }),
+    }).catch(() => {});
+  }, 700);
+}
+function scheduleFavPush() {
+  if (!syncEnabled) return;
+  clearTimeout(favPushTimer);
+  favPushTimer = setTimeout(() => {
+    fetch("/api/favorites", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ favorites }),
+    }).catch(() => {});
+  }, 700);
+}
+
+// Pull the shared plan/favorites and refresh whatever tab is showing.
+async function refreshFromServer() {
+  if (!syncEnabled) return;
+  try {
+    const [pr, fr] = await Promise.all([
+      fetch("/api/plan").then((r) => r.json()),
+      fetch("/api/favorites").then((r) => r.json()),
+    ]);
+    if (pr.enabled && pr.plan) {
+      plan = pr.plan;
+      localStorage.setItem(PLAN_KEY, JSON.stringify(plan));
+      updatePlanCount();
+    }
+    if (fr.enabled && Array.isArray(fr.favorites)) {
+      favorites = fr.favorites;
+      localStorage.setItem(FAV_KEY, JSON.stringify(favorites));
+      updateFavCount();
+    }
+    if ($("#tab-plan").classList.contains("active")) renderPlanner();
+    if ($("#tab-favorites").classList.contains("active")) renderFavorites();
+  } catch {
+    /* offline/transient — keep local copy */
+  }
+}
+
+// First load: server wins if it has data, otherwise push the local copy up.
+async function initSync() {
+  if (!syncEnabled) return;
+  try {
+    const [pr, fr] = await Promise.all([
+      fetch("/api/plan").then((r) => r.json()),
+      fetch("/api/favorites").then((r) => r.json()),
+    ]);
+    if (pr.enabled) {
+      const serverPlan = pr.plan || {};
+      if (Object.keys(serverPlan).length) {
+        plan = serverPlan;
+        localStorage.setItem(PLAN_KEY, JSON.stringify(plan));
+      } else if (totalDishes()) {
+        schedulePlanPush();
+      }
+    }
+    if (fr.enabled) {
+      const serverFav = fr.favorites || [];
+      if (serverFav.length) {
+        favorites = serverFav;
+        localStorage.setItem(FAV_KEY, JSON.stringify(favorites));
+      } else if (favorites.length) {
+        scheduleFavPush();
+      }
+    }
+    updatePlanCount();
+    updateFavCount();
+    renderPlanner();
+  } catch {
+    /* ignore */
+  }
 }
 
 // ============================================================
@@ -134,10 +223,22 @@ function activateTab(name) {
   document
     .querySelectorAll(".panel")
     .forEach((p) => p.classList.toggle("active", p.id === `tab-${name}`));
-  if (name === "plan") renderPlanner();
+  if (name === "plan") {
+    renderPlanner();
+    refreshFromServer();
+  }
   if (name === "search") updateTargetBanner();
-  if (name === "favorites") renderFavorites();
+  if (name === "favorites") {
+    renderFavorites();
+    refreshFromServer();
+  }
 }
+
+// Pull the latest shared data when the app regains focus (e.g. you switch back
+// to it after your wife added something on her phone).
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) refreshFromServer();
+});
 
 // ============================================================
 //  Search
@@ -671,9 +772,10 @@ async function init() {
   updateTargetBanner();
   renderPlanner();
   try {
-    const res = await fetch("/api/config");
-    const cfg = await res.json();
+    const cfg = await (await fetch("/api/config")).json();
     if (!cfg.hasKey) $("#keyBanner").classList.remove("hidden");
+    syncEnabled = Boolean(cfg.storage);
+    await initSync();
   } catch {
     /* server not reachable yet — ignore */
   }

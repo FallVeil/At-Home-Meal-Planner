@@ -12,6 +12,35 @@ const PORT = process.env.PORT || 3000;
 const API_KEY = process.env.SPOONACULAR_API_KEY;
 const SPOON = "https://api.spoonacular.com";
 
+// Optional shared storage (Upstash Redis REST) so the plan + favorites sync
+// across devices. If these env vars aren't set, the app falls back to
+// per-device localStorage and everything still works.
+const REDIS_URL = process.env.UPSTASH_REDIS_REST_URL;
+const REDIS_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN;
+const storageEnabled = Boolean(REDIS_URL && REDIS_TOKEN);
+
+async function redisCmd(command) {
+  const r = await fetch(REDIS_URL, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${REDIS_TOKEN}`, "Content-Type": "application/json" },
+    body: JSON.stringify(command),
+  });
+  if (!r.ok) throw new Error(`Redis ${r.status}`);
+  return (await r.json()).result;
+}
+async function redisGetJSON(key) {
+  const v = await redisCmd(["GET", key]);
+  if (v == null) return null;
+  try {
+    return typeof v === "string" ? JSON.parse(v) : v;
+  } catch {
+    return null;
+  }
+}
+async function redisSetJSON(key, obj) {
+  await redisCmd(["SET", key, JSON.stringify(obj)]);
+}
+
 // Spoonacular tags recipes with many overlapping dishTypes, so type=X alone
 // leaks (salads into entrees, etc.). We post-filter results: keep a recipe only
 // if its dishTypes hit an "include" tag and none of the "exclude" tags.
@@ -158,9 +187,49 @@ async function spoonFetch(urlPath, params = {}) {
   return r.json();
 }
 
-// Lets the frontend know whether a key is set (to show a friendly banner).
+// Lets the frontend know whether a key is set (to show a friendly banner)
+// and whether cross-device sync storage is configured.
 app.get("/api/config", (req, res) => {
-  res.json({ hasKey: Boolean(API_KEY && API_KEY !== "your_key_here") });
+  res.json({
+    hasKey: Boolean(API_KEY && API_KEY !== "your_key_here"),
+    storage: storageEnabled,
+  });
+});
+
+// ---- Shared plan + favorites (one household, no accounts) ----
+app.get("/api/plan", async (req, res) => {
+  if (!storageEnabled) return res.json({ enabled: false });
+  try {
+    res.json({ enabled: true, plan: (await redisGetJSON("meal:plan")) || {} });
+  } catch {
+    res.status(502).json({ error: "Could not read the shared plan." });
+  }
+});
+app.put("/api/plan", async (req, res) => {
+  if (!storageEnabled) return res.json({ enabled: false });
+  try {
+    await redisSetJSON("meal:plan", req.body?.plan || {});
+    res.json({ ok: true });
+  } catch {
+    res.status(502).json({ error: "Could not save the shared plan." });
+  }
+});
+app.get("/api/favorites", async (req, res) => {
+  if (!storageEnabled) return res.json({ enabled: false });
+  try {
+    res.json({ enabled: true, favorites: (await redisGetJSON("meal:favorites")) || [] });
+  } catch {
+    res.status(502).json({ error: "Could not read favorites." });
+  }
+});
+app.put("/api/favorites", async (req, res) => {
+  if (!storageEnabled) return res.json({ enabled: false });
+  try {
+    await redisSetJSON("meal:favorites", req.body?.favorites || []);
+    res.json({ ok: true });
+  } catch {
+    res.status(502).json({ error: "Could not save favorites." });
+  }
 });
 
 // Search recipes by title/keyword, optionally within a dish-type category.
