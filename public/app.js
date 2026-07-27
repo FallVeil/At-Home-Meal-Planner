@@ -546,6 +546,7 @@ const GROCERY_KEY = "mealPlanner.grocery.v1";
 let grocery = loadGrocery(); // { [weekKey]: { checked: {itemKey:true}, extras: [{id,name,checked}] } }
 let lastGroceryRecipes = [];
 let groceryPushTimer = null;
+let staplesExpanded = false; // "Pantry staples" group collapsed by default
 
 function loadGrocery() {
   try {
@@ -571,9 +572,10 @@ function scheduleGroceryPush() {
   }, 700);
 }
 function weekGrocery(weekKey) {
-  const w = (grocery[weekKey] ||= { checked: {}, extras: [] });
+  const w = (grocery[weekKey] ||= { checked: {}, extras: [], overrides: {} });
   w.checked ||= {};
   w.extras ||= [];
+  w.overrides ||= {}; // recipe-item aisle overrides: { itemKey: aisle }
   return w;
 }
 
@@ -585,6 +587,78 @@ const STAPLE_PATTERNS = [
   /olive oil/, /vegetable oil/, /canola oil/, /^oil$/, /cooking spray/,
 ];
 const isStaple = (name) => STAPLE_PATTERNS.some((re) => re.test(name.toLowerCase().trim()));
+
+// Sort a manually-added item into a grocery-store section by keyword.
+// Ordered: more specific rules first (e.g. "peanut butter" before "butter").
+const AISLE_RULES = [
+  { aisle: "Household", keywords: ["paper towel", "toilet paper", "napkin", "dish soap", "detergent", "laundry", "foil", "plastic wrap", "cling wrap", "parchment", "trash bag", "garbage bag", "ziploc", "sponge", "cleaner", "bleach", "paper plate", "batteries", "toothpaste", "shampoo", "soap", "tissue", "diaper", "wipes"] },
+  { aisle: "Nut butters, Jams, and Honey", keywords: ["peanut butter", "almond butter", "nut butter", "jam", "jelly", "honey", "preserves", "marmalade", "nutella"] },
+  { aisle: "Frozen", keywords: ["frozen", "ice cream", "popsicle"] },
+  { aisle: "Bakery/Bread", keywords: ["bread", "bagel", "bun", "tortilla", "roll", "croissant", "muffin", "pita", "naan", "baguette"] },
+  { aisle: "Cheese", keywords: ["cheese", "cheddar", "mozzarella", "parmesan", "feta", "gouda", "brie", "ricotta"] },
+  { aisle: "Milk, Eggs, Other Dairy", keywords: ["milk", "egg", "butter", "yogurt", "yoghurt", "sour cream", "heavy cream", "half and half", "whipping cream", "cream", "margarine", "creamer"] },
+  { aisle: "Meat", keywords: ["chicken", "beef", "pork", "turkey", "bacon", "sausage", "ham", "steak", "ground", "lamb", "hot dog", "salami", "pepperoni", "deli"] },
+  { aisle: "Seafood", keywords: ["fish", "salmon", "shrimp", "tuna", "cod", "tilapia", "crab", "lobster", "scallop", "seafood"] },
+  { aisle: "Beverages", keywords: ["juice", "soda", "coffee", "tea", "lemonade", "kombucha", "seltzer", "sparkling", "drink"] },
+  { aisle: "Produce", keywords: ["apple", "banana", "lettuce", "tomato", "onion", "potato", "carrot", "spinach", "cucumber", "avocado", "lemon", "lime", "garlic", "broccoli", "celery", "mushroom", "berry", "grape", "orange", "cilantro", "parsley", "kale", "zucchini", "fruit", "vegetable", "veggie", "bell pepper", "corn", "peas", "green bean", "cabbage", "cauliflower", "ginger", "scallion", "squash", "pear", "peach", "melon", "pineapple", "mango"] },
+  { aisle: "Pasta and Rice", keywords: ["pasta", "rice", "noodle", "spaghetti", "quinoa", "macaroni", "couscous", "orzo", "penne"] },
+  { aisle: "Baking", keywords: ["flour", "sugar", "baking soda", "baking powder", "vanilla", "yeast", "cocoa", "chocolate chip", "cornstarch"] },
+  { aisle: "Cereal", keywords: ["cereal", "oatmeal", "oats", "granola"] },
+  { aisle: "Canned and Jarred", keywords: ["canned", "beans", "broth", "stock", "tomato sauce", "tomato paste", "chickpea", "lentil"] },
+  { aisle: "Condiments", keywords: ["ketchup", "mustard", "mayo", "dressing", "salsa", "syrup", "bbq", "barbecue", "soy sauce", "hot sauce", "sriracha", "relish", "worcestershire"] },
+  { aisle: "Oil, Vinegar, Salad Dressing", keywords: ["oil", "vinegar"] },
+  { aisle: "Spices and Seasonings", keywords: ["spice", "cinnamon", "paprika", "cumin", "oregano", "seasoning", "chili powder", "garlic powder", "onion powder"] },
+  { aisle: "Alcoholic Beverages", keywords: ["beer", "wine", "vodka", "whiskey", "rum", "tequila", "liquor"] },
+  { aisle: "Savory Snacks", keywords: ["chips", "crackers", "popcorn", "pretzel"] },
+  { aisle: "Sweet Snacks", keywords: ["cookie", "candy", "chocolate", "brownie", "donut", "cake"] },
+  { aisle: "Nuts", keywords: ["almond", "walnut", "cashew", "pecan", "peanut", "pistachio"] },
+];
+function categorizeItem(name) {
+  const n = name.toLowerCase();
+  for (const { aisle, keywords } of AISLE_RULES) {
+    if (keywords.some((k) => n.includes(k))) return aisle;
+  }
+  return "Other";
+}
+
+// Sections the user can move an item into.
+const AISLE_OPTIONS = [
+  "Produce", "Milk, Eggs, Other Dairy", "Cheese", "Meat", "Seafood", "Bakery/Bread",
+  "Frozen", "Pasta and Rice", "Baking", "Cereal", "Canned and Jarred", "Condiments",
+  "Oil, Vinegar, Salad Dressing", "Spices and Seasonings", "Nut butters, Jams, and Honey",
+  "Beverages", "Alcoholic Beverages", "Savory Snacks", "Sweet Snacks", "Nuts",
+  "Health Foods", "Household", "Other",
+];
+
+// A small "⇄" button that expands into an aisle picker when tapped.
+function moveControl(currentAisle, applyFn) {
+  const wrap = document.createElement("span");
+  wrap.className = "move-wrap";
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "move-btn";
+  btn.title = "Move to another section";
+  btn.textContent = "⇄";
+  btn.addEventListener("click", () => {
+    const sel = document.createElement("select");
+    sel.className = "aisle-select";
+    AISLE_OPTIONS.forEach((a) => {
+      const o = document.createElement("option");
+      o.value = a;
+      o.textContent = a;
+      if (a === currentAisle) o.selected = true;
+      sel.appendChild(o);
+    });
+    sel.addEventListener("change", () => applyFn(sel.value));
+    sel.addEventListener("blur", () => {
+      if (sel.parentNode === wrap) wrap.replaceChild(btn, sel);
+    });
+    wrap.replaceChild(sel, btn);
+    sel.focus();
+  });
+  wrap.appendChild(btn);
+  return wrap;
+}
 
 async function buildGrocery(weekKey) {
   const dishes = weekDishes(weekKey);
@@ -610,19 +684,13 @@ function renderGrocery(recipes, weekKey) {
   lastGroceryRecipes = recipes;
   groceryWeek = weekKey;
   const wk = weekGrocery(weekKey);
-  const hideStaples = $("#hideStaples").checked;
 
-  // Combine ingredients (name + unit), skipping staples when hidden.
+  // Combine all ingredients by name + unit.
   const combined = new Map();
-  let hiddenCount = 0;
   recipes.forEach((recipe) => {
     (recipe.ingredients || []).forEach((ing) => {
       const name = (ing.name || "").trim();
       if (!name) return;
-      if (hideStaples && isStaple(name)) {
-        hiddenCount++;
-        return;
-      }
       const unit = (ing.unit || "").trim().toLowerCase();
       const key = `${name.toLowerCase()}|${unit}`;
       if (!combined.has(key)) {
@@ -637,38 +705,70 @@ function renderGrocery(recipes, weekKey) {
   groceryList.innerHTML = "";
   $("#groceryControls").classList.remove("hidden");
 
-  // Your own items first.
-  if (wk.extras.length) {
-    const section = document.createElement("div");
-    section.className = "aisle";
-    section.innerHTML = `<h3>Added items</h3>`;
-    wk.extras.forEach((extra) => section.appendChild(extraRow(extra, weekKey)));
-    groceryList.appendChild(section);
-  }
-
-  // Recipe ingredients grouped by aisle.
+  // Split into pantry staples (their own collapsible group) and everything else.
+  // A manual recategorization (override) pulls an item out of the staples group.
   const byAisle = {};
-  for (const item of combined.values()) (byAisle[item.aisle] ||= []).push(item);
+  const staplesList = [];
+  for (const item of combined.values()) {
+    const overridden = Boolean(wk.overrides[item.key]);
+    if (isStaple(item.name) && !overridden) {
+      staplesList.push(item);
+      continue;
+    }
+    const aisle = wk.overrides[item.key] || item.aisle;
+    (byAisle[aisle] ||= { extras: [], items: [] }).items.push(item);
+  }
+  wk.extras.forEach((extra) => {
+    const aisle = extra.aisle || categorizeItem(extra.name);
+    (byAisle[aisle] ||= { extras: [], items: [] }).extras.push(extra);
+  });
+
   Object.keys(byAisle)
     .sort((a, b) => (a === "Other" ? 1 : b === "Other" ? -1 : a.localeCompare(b)))
     .forEach((aisle) => {
+      const group = byAisle[aisle];
       const section = document.createElement("div");
       section.className = "aisle";
       section.innerHTML = `<h3>${escapeHtml(aisle)}</h3>`;
-      byAisle[aisle]
+      group.extras.forEach((extra) => section.appendChild(extraRow(extra, weekKey)));
+      group.items
         .sort((a, b) => a.name.localeCompare(b.name))
         .forEach((item) => section.appendChild(groceryRow(item, weekKey)));
       groceryList.appendChild(section);
     });
+
+  // Collapsible "Pantry staples" group at the bottom.
+  if (staplesList.length) {
+    const section = document.createElement("div");
+    section.className = "aisle staples-group";
+    const header = document.createElement("h3");
+    header.className = "staples-header";
+    header.innerHTML = `<span class="chev">${staplesExpanded ? "▾" : "▸"}</span> Pantry staples <span class="staples-count">(${staplesList.length})</span>`;
+    const itemsWrap = document.createElement("div");
+    itemsWrap.className = "staples-items" + (staplesExpanded ? "" : " hidden");
+    staplesList
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .forEach((item) => itemsWrap.appendChild(groceryRow(item, weekKey)));
+    header.addEventListener("click", () => {
+      staplesExpanded = !staplesExpanded;
+      itemsWrap.classList.toggle("hidden", !staplesExpanded);
+      header.querySelector(".chev").textContent = staplesExpanded ? "▾" : "▸";
+    });
+    section.appendChild(header);
+    section.appendChild(itemsWrap);
+    groceryList.appendChild(section);
+  }
 
   if (!groceryList.children.length) {
     groceryList.innerHTML = `<div class="empty">No items to buy — add your own above.</div>`;
   }
 
   const weekLabel = isThisWeek(weekKey) ? "this week" : `week of ${fmtRange(parseKey(weekKey))}`;
-  const staplesNote =
-    hideStaples && hiddenCount ? ` · ${hiddenCount} staple${hiddenCount === 1 ? "" : "s"} hidden` : "";
-  groceryMeta.textContent = `${weekLabel} — ${combined.size} item${combined.size === 1 ? "" : "s"} for ${recipes.length} dish${recipes.length === 1 ? "" : "es"}${staplesNote}. Tap an item to check it off.`;
+  const toBuy = combined.size - staplesList.length;
+  const staplesNote = staplesList.length
+    ? ` · ${staplesList.length} pantry staple${staplesList.length === 1 ? "" : "s"}`
+    : "";
+  groceryMeta.textContent = `${weekLabel} — ${toBuy} item${toBuy === 1 ? "" : "s"} for ${recipes.length} dish${recipes.length === 1 ? "" : "es"}${staplesNote}. Tap an item to check it off.`;
 }
 
 function groceryRow(item, weekKey) {
@@ -692,6 +792,15 @@ function groceryRow(item, weekKey) {
     else delete wk.checked[item.key];
     saveGrocery();
   });
+  const effectiveAisle = wk.overrides[item.key] || item.aisle;
+  row.appendChild(
+    moveControl(effectiveAisle, (a) => {
+      if (a === item.aisle) delete wk.overrides[item.key];
+      else wk.overrides[item.key] = a;
+      saveGrocery();
+      renderGrocery(lastGroceryRecipes, weekKey);
+    })
+  );
   return row;
 }
 
@@ -702,18 +811,33 @@ function extraRow(extra, weekKey) {
   const id = "ex-" + extra.id;
   row.innerHTML = `
     <input type="checkbox" id="${id}" ${extra.checked ? "checked" : ""} />
-    <label for="${id}">${escapeHtml(capitalize(extra.name))}</label>
-    <button class="extra-remove" aria-label="Remove item">✕</button>`;
+    <label for="${id}">${escapeHtml(capitalize(extra.name))}</label>`;
   row.querySelector("input").addEventListener("change", (e) => {
     extra.checked = e.target.checked;
     row.classList.toggle("checked", e.target.checked);
     saveGrocery();
   });
-  row.querySelector(".extra-remove").addEventListener("click", () => {
+
+  const actions = document.createElement("span");
+  actions.className = "row-actions";
+  actions.appendChild(
+    moveControl(extra.aisle || categorizeItem(extra.name), (a) => {
+      extra.aisle = a;
+      saveGrocery();
+      renderGrocery(lastGroceryRecipes, weekKey);
+    })
+  );
+  const remove = document.createElement("button");
+  remove.className = "extra-remove";
+  remove.setAttribute("aria-label", "Remove item");
+  remove.textContent = "✕";
+  remove.addEventListener("click", () => {
     wk.extras = wk.extras.filter((x) => x.id !== extra.id);
     saveGrocery();
     renderGrocery(lastGroceryRecipes, weekKey);
   });
+  actions.appendChild(remove);
+  row.appendChild(actions);
   return row;
 }
 
@@ -727,13 +851,11 @@ $("#addItemForm").addEventListener("submit", (e) => {
     id: Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
     name,
     checked: false,
+    aisle: categorizeItem(name),
   });
   saveGrocery();
   input.value = "";
   renderGrocery(lastGroceryRecipes, groceryWeek);
-});
-$("#hideStaples").addEventListener("change", () => {
-  if (groceryWeek) renderGrocery(lastGroceryRecipes, groceryWeek);
 });
 
 $("#copyList").addEventListener("click", () => {

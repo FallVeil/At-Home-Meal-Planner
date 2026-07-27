@@ -377,17 +377,45 @@ button { font-family: inherit; }
   cursor: pointer;
 }
 .add-item button:hover { background: var(--green-dark); }
+.row-actions { margin-left: auto; display: flex; align-items: center; gap: 4px; align-self: center; }
 .extra-remove {
-  margin-left: auto;
   background: transparent;
   border: none;
   color: var(--muted);
   font-size: 0.95rem;
   cursor: pointer;
   padding: 2px 6px;
-  align-self: center;
 }
 .extra-remove:hover { color: var(--danger); }
+
+/* Move-to-section control on grocery rows */
+.move-wrap { align-self: center; margin-left: 8px; }
+.move-btn {
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  font-size: 1rem;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 6px;
+}
+.move-btn:hover { color: var(--accent); background: var(--bg); }
+.aisle-select {
+  background: var(--card);
+  color: var(--ink);
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  padding: 3px 4px;
+  font-size: 0.8rem;
+  max-width: 170px;
+}
+.row-actions .move-wrap { margin-left: 0; }
+
+/* Collapsible "Pantry staples" group */
+.staples-header { cursor: pointer; user-select: none; display: flex; align-items: center; gap: 6px; }
+.staples-header:hover { filter: brightness(1.2); }
+.staples-header .chev { font-size: 0.75rem; }
+.staples-count { color: var(--muted); font-weight: 400; font-size: 0.78rem; text-transform: none; letter-spacing: normal; }
 
 /* Recipe cooking steps in the modal */
 .steps { padding-left: 1.3em; margin: 8px 0 16px; }
