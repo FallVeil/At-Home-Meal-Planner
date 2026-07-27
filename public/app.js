@@ -890,12 +890,37 @@ modal.addEventListener("click", (e) => {
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") closeModal();
 });
+// Keep the screen awake while a recipe is open (for hands-free cooking).
+// Uses the Screen Wake Lock API where supported; silently no-ops otherwise.
+let wakeLock = null;
+async function requestWakeLock() {
+  try {
+    if ("wakeLock" in navigator) wakeLock = await navigator.wakeLock.request("screen");
+  } catch {
+    /* unsupported or denied — ignore */
+  }
+}
+async function releaseWakeLock() {
+  try {
+    await wakeLock?.release();
+  } catch {
+    /* ignore */
+  }
+  wakeLock = null;
+}
+// The OS auto-releases the lock when the tab is backgrounded; re-acquire on return.
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden && !modal.classList.contains("hidden")) requestWakeLock();
+});
+
 function closeModal() {
   modal.classList.add("hidden");
   modalBody.innerHTML = "";
+  releaseWakeLock();
 }
 async function showRecipe(id) {
   modal.classList.remove("hidden");
+  requestWakeLock(); // keep the screen on while viewing/cooking
   modalBody.innerHTML = `<div class="loading"><div class="spinner"></div>Loading recipe…</div>`;
   try {
     const res = await fetch(`/api/recipes?ids=${id}`);
