@@ -392,6 +392,23 @@ button { font-family: inherit; }
   cursor: pointer;
 }
 .add-item button:hover { background: var(--green-dark); }
+/* Badge marking a manually-added grocery item (vs. a recipe ingredient) */
+.added-badge {
+  font-size: 0.62rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  white-space: nowrap;
+  align-self: center;
+  flex: none;
+}
+/* Slightly different look once it's been rolled over from a previous week */
+.added-badge.carried { background: transparent; color: var(--accent); border: 1px solid var(--accent); }
+
 .row-actions { margin-left: auto; display: flex; align-items: center; gap: 4px; align-self: center; }
 .extra-remove {
   background: transparent;

@@ -677,11 +677,13 @@ function populateGrocerySelect() {
   if (!sel) return;
   const weeks = new Set();
   const today = startOfWeek(new Date());
+  const thisWeekKey = isoDate(today);
   for (let i = 0; i < WEEKS_SHOWN; i++) {
     weeks.add(isoDate(new Date(today.getFullYear(), today.getMonth(), today.getDate() + i * 7)));
   }
-  Object.keys(plan).forEach((k) => weekDishes(k).length && weeks.add(k));
-  Object.keys(grocery).forEach((k) => weeks.add(k));
+  // Only surface this week onward (plus any future weeks that already have data).
+  Object.keys(plan).forEach((k) => k >= thisWeekKey && weekDishes(k).length && weeks.add(k));
+  Object.keys(grocery).forEach((k) => k >= thisWeekKey && weeks.add(k));
 
   const target = groceryWeek && weeks.has(groceryWeek) ? groceryWeek : isoDate(today);
   sel.innerHTML = "";
@@ -700,9 +702,43 @@ function populateGrocerySelect() {
     });
 }
 
+// Move unchecked self-added items from already-passed weeks into the current/
+// upcoming list, so anything you didn't buy follows you forward. Checked-off
+// (crossed-out) items stay behind as completed.
+function carryForwardExtras(weekKey) {
+  const thisWeek = weekKeyOf(new Date());
+  if (weekKey < thisWeek) return; // never carry into a past week
+  let moved = false;
+  Object.keys(grocery).forEach((k) => {
+    if (k >= thisWeek) return; // only pull from weeks that have already passed
+    const src = grocery[k];
+    if (!src) return;
+    const staying = [];
+    (src.extras || []).forEach((extra) => {
+      if (extra.checked) staying.push(extra);
+      else {
+        extra.carried = true; // mark as rolled over from a previous week
+        weekGrocery(weekKey).extras.push(extra);
+        moved = true;
+      }
+    });
+    src.extras = staying;
+    // Tidy up weeks left with nothing.
+    if (
+      !src.extras.length &&
+      !Object.keys(src.checked || {}).length &&
+      !Object.keys(src.overrides || {}).length
+    ) {
+      delete grocery[k];
+    }
+  });
+  if (moved) saveGrocery();
+}
+
 // Load + render the grocery list for a specific week (works even with no dishes).
 async function loadGroceryWeek(weekKey) {
   groceryWeek = weekKey;
+  carryForwardExtras(weekKey);
   groceryEmpty.classList.add("hidden");
   const sel = $("#grocerySelect");
   if (sel && sel.value !== weekKey) sel.value = weekKey;
@@ -858,7 +894,8 @@ function extraRow(extra, weekKey) {
   const id = "ex-" + extra.id;
   row.innerHTML = `
     <input type="checkbox" id="${id}" ${extra.checked ? "checked" : ""} />
-    <label for="${id}">${escapeHtml(capitalize(extra.name))}</label>`;
+    <label for="${id}">${escapeHtml(capitalize(extra.name))}</label>
+    <span class="added-badge${extra.carried ? " carried" : ""}">${extra.carried ? "↩ carried over" : "＋ added"}</span>`;
   row.querySelector("input").addEventListener("change", (e) => {
     extra.checked = e.target.checked;
     row.classList.toggle("checked", e.target.checked);
