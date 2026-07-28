@@ -380,16 +380,22 @@ function summarizeNutrition(nutrition) {
 }
 
 function recipeSteps(r) {
-  // Prefer Spoonacular's structured steps; fall back to plain-text instructions.
-  const analyzed = r.analyzedInstructions?.[0]?.steps;
-  if (analyzed && analyzed.length) return analyzed.map((s) => s.step).filter(Boolean);
-  if (r.instructions) {
-    return r.instructions
+  // Split a chunk into sentences, repairing run-ons where a period is jammed
+  // against the next Capitalized word (a common flaw in the source data), e.g.
+  // "Cut into cubes.Bring to a boil.Chop celery." -> three separate steps.
+  const splitSentences = (chunk) =>
+    (chunk || "")
       .replace(/<[^>]+>/g, " ") // strip HTML tags
-      .split(/\.\s+|\n+/)
+      .replace(/\s+/g, " ") // collapse whitespace
+      .replace(/\.(?=[A-Z])/g, ". ") // add the missing space after a crammed period
+      .split(/(?<=\.)\s+/) // split on sentence boundaries, keeping the period
       .map((s) => s.trim())
       .filter((s) => s.length > 2);
-  }
+
+  // Process each structured step individually so real step boundaries are kept.
+  const analyzed = r.analyzedInstructions?.[0]?.steps;
+  if (analyzed && analyzed.length) return analyzed.flatMap((s) => splitSentences(s.step));
+  if (r.instructions) return splitSentences(r.instructions);
   return [];
 }
 

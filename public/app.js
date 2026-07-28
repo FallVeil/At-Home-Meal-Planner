@@ -138,7 +138,7 @@ async function refreshFromServer() {
     }
     if ($("#tab-plan").classList.contains("active")) renderPlanner();
     if ($("#tab-favorites").classList.contains("active")) renderFavorites();
-    if ($("#tab-grocery").classList.contains("active") && lastGroceryRecipes.length && groceryWeek) {
+    if ($("#tab-grocery").classList.contains("active") && groceryWeek) {
       renderGrocery(lastGroceryRecipes, groceryWeek);
     }
   } catch {
@@ -250,7 +250,11 @@ function activateTab(name) {
     renderFavorites();
     refreshFromServer();
   }
-  if (name === "grocery") refreshFromServer();
+  if (name === "grocery") {
+    populateGrocerySelect();
+    loadGroceryWeek(groceryWeek || weekKeyOf(new Date()));
+    refreshFromServer();
+  }
 }
 
 // Pull the latest shared data when the app regains focus (e.g. you switch back
@@ -660,12 +664,54 @@ function moveControl(currentAisle, applyFn) {
   return wrap;
 }
 
-async function buildGrocery(weekKey) {
-  const dishes = weekDishes(weekKey);
-  if (!dishes.length) return;
+// Jump to the Grocery tab for a given week (used by the Planner's "List" button).
+function buildGrocery(weekKey) {
   groceryWeek = weekKey;
   activateTab("grocery");
+}
+
+// Fill the Grocery tab's week picker: this week + next four, plus any weeks
+// that already have dishes or grocery items, chronological.
+function populateGrocerySelect() {
+  const sel = $("#grocerySelect");
+  if (!sel) return;
+  const weeks = new Set();
+  const today = startOfWeek(new Date());
+  for (let i = 0; i < WEEKS_SHOWN; i++) {
+    weeks.add(isoDate(new Date(today.getFullYear(), today.getMonth(), today.getDate() + i * 7)));
+  }
+  Object.keys(plan).forEach((k) => weekDishes(k).length && weeks.add(k));
+  Object.keys(grocery).forEach((k) => weeks.add(k));
+
+  const target = groceryWeek && weeks.has(groceryWeek) ? groceryWeek : isoDate(today);
+  sel.innerHTML = "";
+  [...weeks]
+    .sort()
+    .forEach((k) => {
+      const monday = parseKey(k);
+      const dishes = weekDishes(k).length;
+      const opt = document.createElement("option");
+      opt.value = k;
+      opt.textContent =
+        (isThisWeek(k) ? `This week (${fmtRange(monday)})` : fmtRange(monday)) +
+        (dishes ? ` — ${dishes} dish${dishes === 1 ? "" : "es"}` : "");
+      if (k === target) opt.selected = true;
+      sel.appendChild(opt);
+    });
+}
+
+// Load + render the grocery list for a specific week (works even with no dishes).
+async function loadGroceryWeek(weekKey) {
+  groceryWeek = weekKey;
   groceryEmpty.classList.add("hidden");
+  const sel = $("#grocerySelect");
+  if (sel && sel.value !== weekKey) sel.value = weekKey;
+
+  const dishes = weekDishes(weekKey);
+  if (!dishes.length) {
+    renderGrocery([], weekKey); // shows your own items + "add your own"
+    return;
+  }
   $("#groceryControls").classList.add("hidden");
   groceryList.innerHTML = `<div class="loading"><div class="spinner"></div>Building your grocery list…</div>`;
   groceryMeta.textContent = "";
@@ -679,6 +725,7 @@ async function buildGrocery(weekKey) {
     groceryList.innerHTML = `<div class="empty">😕 ${escapeHtml(err.message)}</div>`;
   }
 }
+$("#grocerySelect").addEventListener("change", (e) => loadGroceryWeek(e.target.value));
 
 function renderGrocery(recipes, weekKey) {
   lastGroceryRecipes = recipes;

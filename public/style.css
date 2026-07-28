@@ -347,6 +347,21 @@ button { font-family: inherit; }
   border-radius: var(--radius);
 }
 
+/* Grocery week picker */
+.grocery-week { display: flex; align-items: center; gap: 8px; margin: 4px 0 14px; }
+.grocery-week label { color: var(--muted); font-size: 0.9rem; white-space: nowrap; }
+.grocery-week select {
+  flex: 1;
+  max-width: 340px;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--card);
+  color: var(--ink);
+  font-size: 16px;
+}
+.grocery-week select:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+
 /* Grocery controls: add-your-own item + hide-staples toggle */
 .grocery-controls {
   display: flex;
