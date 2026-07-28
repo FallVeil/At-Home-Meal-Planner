@@ -270,8 +270,6 @@ $("#searchForm").addEventListener("submit", (e) => {
   e.preventDefault();
   runSearch();
 });
-$("#calFilter").addEventListener("change", runSearch);
-$("#gfFilter").addEventListener("change", runSearch);
 
 // Category chips.
 document.querySelectorAll("#categoryChips .chip").forEach((chip) => {
@@ -293,8 +291,8 @@ async function runSearch() {
   currentSearch = {
     query: $("#searchInput").value.trim(),
     type: activeCategory,
-    gf: $("#gfFilter").checked,
-    under500: $("#calFilter").checked,
+    gf: true, // gluten-free is always enforced (celiac); control hidden
+    under500: false,
   };
   searchOffset = 0;
   searchHasMore = false;
@@ -322,7 +320,7 @@ async function fetchSearchPage(reset) {
     const staleNote = $("#staleNote");
     if (data.stale) {
       staleNote.textContent =
-        "⚠️ Daily recipe limit reached — showing saved recipes from recent browsing.";
+        "Daily recipe limit reached — showing saved recipes from recent browsing.";
       staleNote.classList.remove("hidden");
     } else {
       staleNote.classList.add("hidden");
@@ -340,7 +338,7 @@ async function fetchSearchPage(reset) {
   } catch (err) {
     if (reset) {
       $("#staleNote").classList.add("hidden");
-      results.innerHTML = `<div class="empty">😕 ${escapeHtml(err.message)}</div>`;
+      results.innerHTML = `<div class="empty">${escapeHtml(err.message)}</div>`;
     } else {
       toast("Couldn't load more recipes.");
     }
@@ -362,7 +360,7 @@ function updateTargetBanner() {
   const banner = $("#targetBanner");
   const monday = parseKey(targetWeek);
   const label = isThisWeek(targetWeek) ? "this week" : `week of ${fmtRange(monday)}`;
-  banner.innerHTML = `📅 Adding dishes to <strong>${escapeHtml(label)}</strong> <span class="muted-note">— change in Planner</span>`;
+  banner.innerHTML = `Adding dishes to <strong>${escapeHtml(label)}</strong> <span class="muted-note">— change in Planner</span>`;
 }
 
 // ============================================================
@@ -372,9 +370,9 @@ function recipeCard(r, context, weekKey) {
   const card = document.createElement("div");
   card.className = "card";
   const meta = [
-    r.readyInMinutes ? `⏱ ${r.readyInMinutes} min` : "",
-    r.servings ? `🍽 ${r.servings} serv` : "",
-    r.calories != null ? `🔥 ${r.calories} cal` : "",
+    r.readyInMinutes ? `${r.readyInMinutes} min` : "",
+    r.servings ? `${r.servings} serv` : "",
+    r.calories != null ? `${r.calories} cal` : "",
   ]
     .filter(Boolean)
     .join(" · ");
@@ -407,7 +405,7 @@ function recipeCard(r, context, weekKey) {
     const added = inWeek(targetWeek, r.id);
     const add = document.createElement("button");
     add.className = "add-btn" + (added ? " added" : "");
-    add.textContent = added ? "✓ Added" : "＋ Add to plan";
+    add.textContent = added ? "Added" : "Add to plan";
     add.addEventListener("click", () => {
       if (inWeek(targetWeek, r.id)) return;
       addToWeek(targetWeek, {
@@ -419,7 +417,7 @@ function recipeCard(r, context, weekKey) {
         calories: r.calories,
       });
       add.classList.add("added");
-      add.textContent = "✓ Added";
+      add.textContent = "Added";
       const label = isThisWeek(targetWeek) ? "this week" : `week of ${fmtRange(parseKey(targetWeek))}`;
       toast(`Added “${r.title}” to ${label}`);
     });
@@ -430,7 +428,7 @@ function recipeCard(r, context, weekKey) {
   const star = document.createElement("button");
   star.className = "fav-star" + (isFavorite(r.id) ? " on" : "");
   star.setAttribute("aria-label", "Toggle favorite");
-  star.textContent = isFavorite(r.id) ? "★" : "☆";
+  star.innerHTML = starIcon(isFavorite(r.id));
   star.addEventListener("click", (e) => {
     e.stopPropagation();
     const nowFav = toggleFavorite({
@@ -442,7 +440,7 @@ function recipeCard(r, context, weekKey) {
       calories: r.calories,
     });
     star.classList.toggle("on", nowFav);
-    star.textContent = nowFav ? "★" : "☆";
+    star.innerHTML = starIcon(nowFav);
     toast(nowFav ? `Favorited “${r.title}”` : `Unfavorited “${r.title}”`);
     // On the Favorites tab, remove the card immediately when unfavorited.
     if (!nowFav && $("#tab-favorites").classList.contains("active")) {
@@ -518,12 +516,12 @@ function renderPlanner() {
           <span class="count">${dishes.length} dish${dishes.length === 1 ? "" : "es"}${isTarget ? " · adding here" : ""}</span>
         </div>
         <div class="week-head-actions">
-          <button class="ghost add-here">＋ Add dishes</button>
-          <button class="ghost mk-grocery"${dishes.length ? "" : " disabled"}>🛒 List</button>
+          <button class="ghost add-here">Add dishes</button>
+          <button class="ghost mk-grocery"${dishes.length ? "" : " disabled"}>List</button>
         </div>
       </div>
       <div class="week-cards card-grid"></div>
-      <div class="week-empty${dishes.length ? " hidden" : ""}">No dishes yet — tap “＋ Add dishes”.</div>`;
+      <div class="week-empty${dishes.length ? " hidden" : ""}">No dishes yet — tap “Add dishes”.</div>`;
 
     const cards = block.querySelector(".week-cards");
     dishes.forEach((r) => cards.appendChild(recipeCard(r, "plan", key)));
@@ -758,7 +756,7 @@ async function loadGroceryWeek(weekKey) {
     if (!res.ok) throw new Error(data.error || "Could not load ingredients");
     renderGrocery(data.recipes, weekKey);
   } catch (err) {
-    groceryList.innerHTML = `<div class="empty">😕 ${escapeHtml(err.message)}</div>`;
+    groceryList.innerHTML = `<div class="empty">${escapeHtml(err.message)}</div>`;
   }
 }
 $("#grocerySelect").addEventListener("change", (e) => loadGroceryWeek(e.target.value));
@@ -895,7 +893,7 @@ function extraRow(extra, weekKey) {
   row.innerHTML = `
     <input type="checkbox" id="${id}" ${extra.checked ? "checked" : ""} />
     <label for="${id}">${escapeHtml(capitalize(extra.name))}</label>
-    <span class="added-badge${extra.carried ? " carried" : ""}">${extra.carried ? "↩ carried over" : "＋ added"}</span>`;
+    <span class="added-badge${extra.carried ? " carried" : ""}">${extra.carried ? "carried over" : "added"}</span>`;
   row.querySelector("input").addEventListener("change", (e) => {
     extra.checked = e.target.checked;
     row.classList.toggle("checked", e.target.checked);
@@ -1018,12 +1016,12 @@ async function showRecipe(id) {
       <img src="${r.image || placeholder()}" alt="${escapeHtml(r.title)}" />
       <h2>${escapeHtml(r.title)}</h2>
       <p class="card-meta">${[
-        r.readyInMinutes ? `⏱ ${r.readyInMinutes} min` : "",
-        r.servings ? `🍽 ${r.servings} servings` : "",
+        r.readyInMinutes ? `${r.readyInMinutes} min` : "",
+        r.servings ? `${r.servings} servings` : "",
       ]
         .filter(Boolean)
         .join(" · ")}</p>
-      ${r.glutenFree ? '<span class="gf-note">✓ Gluten-free</span>' : ""}
+      ${r.glutenFree ? '<span class="gf-note">Gluten-free</span>' : ""}
       ${
         n
           ? `<div class="nutri">
@@ -1051,8 +1049,8 @@ async function showRecipe(id) {
           : ""
       }
       <div class="card-actions" style="margin-top:16px">
-        <button class="add-btn${added ? " added" : ""}" id="modalAdd">${added ? "✓ Added" : "＋ Add to plan"}</button>
-        <button class="ghost fav-btn${isFavorite(r.id) ? " on" : ""}" id="modalFav">${isFavorite(r.id) ? "★ Favorited" : "☆ Favorite"}</button>
+        <button class="add-btn${added ? " added" : ""}" id="modalAdd">${added ? "Added" : "Add to plan"}</button>
+        <button class="ghost fav-btn${isFavorite(r.id) ? " on" : ""}" id="modalFav">${isFavorite(r.id) ? "Favorited" : "Favorite"}</button>
       </div>`;
     $("#modalFav").addEventListener("click", () => {
       const nowFav = toggleFavorite({
@@ -1065,7 +1063,7 @@ async function showRecipe(id) {
       });
       const b = $("#modalFav");
       b.classList.toggle("on", nowFav);
-      b.textContent = nowFav ? "★ Favorited" : "☆ Favorite";
+      b.textContent = nowFav ? "Favorited" : "Favorite";
       toast(nowFav ? `Favorited “${r.title}”` : `Unfavorited “${r.title}”`);
     });
     const addBtn = $("#modalAdd");
@@ -1080,12 +1078,12 @@ async function showRecipe(id) {
         calories: n ? n.calories : undefined,
       });
       addBtn.classList.add("added");
-      addBtn.textContent = "✓ Added";
+      addBtn.textContent = "Added";
       const label = isThisWeek(targetWeek) ? "this week" : `week of ${fmtRange(parseKey(targetWeek))}`;
       toast(`Added “${r.title}” to ${label}`);
     });
   } catch (err) {
-    modalBody.innerHTML = `<div class="empty">😕 ${escapeHtml(err.message)}</div>`;
+    modalBody.innerHTML = `<div class="empty">${escapeHtml(err.message)}</div>`;
   }
 }
 
@@ -1121,11 +1119,17 @@ function escapeHtml(str) {
     (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])
   );
 }
+function starIcon(filled) {
+  const d = "M12 3.6l2.5 5.1 5.6.8-4.1 4 1 5.6-5-2.6-5 2.6 1-5.6-4.1-4 5.6-.8z";
+  return filled
+    ? `<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="${d}"/></svg>`
+    : `<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" d="${d}"/></svg>`;
+}
 function placeholder() {
   return (
     "data:image/svg+xml," +
     encodeURIComponent(
-      `<svg xmlns='http://www.w3.org/2000/svg' width='300' height='200'><rect width='100%' height='100%' fill='#f0ece5'/><text x='50%' y='50%' font-size='48' text-anchor='middle' dy='.35em'>🍽️</text></svg>`
+      `<svg xmlns='http://www.w3.org/2000/svg' width='300' height='200'><rect width='100%' height='100%' fill='#30322b'/><circle cx='150' cy='96' r='30' fill='none' stroke='#575a50' stroke-width='3'/><line x1='150' y1='118' x2='150' y2='140' stroke='#575a50' stroke-width='3'/></svg>`
     )
   );
 }

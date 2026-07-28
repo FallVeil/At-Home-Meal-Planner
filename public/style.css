@@ -1,15 +1,17 @@
 :root {
-  --bg: #17150f;
-  --card: #221f18;
-  --ink: #ece7dc;
-  --muted: #9a9283;
-  --line: #37322a;
-  --accent: #ef7a4c;
-  --accent-dark: #d76438;
-  --green: #5aa36c;
-  --green-dark: #4c8a5c;
-  --danger: #e06a5a;
-  --shadow: 0 2px 12px rgba(0, 0, 0, 0.4);
+  --bg: #1a1b16;
+  --card: #2e2f28;
+  --ink: #eaece7;
+  --muted: #a1a69d;
+  --line: #3d3f36;
+  --accent: #a6c199;
+  --accent-dark: #90ac82;
+  --green: #4f8c62;
+  --green-dark: #457a55;
+  --rose: #cf8b8f;
+  --rose-ink: #42191c;
+  --danger: #d17d76;
+  --shadow: 0 2px 14px rgba(0, 0, 0, 0.28);
   --radius: 14px;
 }
 
@@ -51,9 +53,10 @@ body {
   min-width: 20px;
   padding: 1px 7px;
   background: var(--accent);
-  color: #fff;
+  color: #21341a;
   border-radius: 999px;
   font-size: 0.75rem;
+  font-weight: 600;
   text-align: center;
 }
 
@@ -103,14 +106,14 @@ main { max-width: 1000px; margin: 0 auto; padding: 22px 20px 80px; }
   width: 100%;
 }
 .chip:hover { background: var(--bg); }
-.chip.active { background: var(--accent); color: #fff; border-color: var(--accent); font-weight: 600; }
+.chip.active { background: var(--accent); color: #21341a; border-color: var(--accent); font-weight: 600; }
 
 /* "Adding to week X" banner on the search page */
 .target-banner {
   margin: 14px 0 4px;
   padding: 9px 13px;
-  background: #1b2733;
-  border: 1px solid #2c3f52;
+  background: #383f39;
+  border: 1px solid #4c554c;
   border-radius: 10px;
   font-size: 0.9rem;
 }
@@ -156,7 +159,7 @@ main { max-width: 1000px; margin: 0 auto; padding: 22px 20px 80px; }
   font-size: 1rem;
   color: var(--ink);
 }
-.nav-arrow:hover:not(:disabled) { background: var(--accent); color: #fff; border-color: var(--accent); }
+.nav-arrow:hover:not(:disabled) { background: var(--accent); color: #21341a; border-color: var(--accent); }
 .nav-arrow:disabled { opacity: 0.35; cursor: default; }
 
 /* Planner: week blocks */
@@ -189,8 +192,8 @@ main { max-width: 1000px; margin: 0 auto; padding: 22px 20px 80px; }
 /* Nutrition block in recipe modal */
 .gf-note {
   display: inline-block;
-  background: #24352a;
-  color: #9ad4a9;
+  background: var(--rose);
+  color: var(--rose-ink);
   border-radius: 6px;
   padding: 3px 9px;
   font-size: 0.8rem;
@@ -239,7 +242,7 @@ main { max-width: 1000px; margin: 0 auto; padding: 22px 20px 80px; }
 /* Buttons */
 button { font-family: inherit; }
 .search-bar button, .primary {
-  background: var(--accent);
+  background: var(--green);
   color: #fff;
   border: none;
   padding: 12px 20px;
@@ -248,7 +251,7 @@ button { font-family: inherit; }
   cursor: pointer;
   font-weight: 600;
 }
-.search-bar button:hover, .primary:hover { background: var(--accent-dark); }
+.search-bar button:hover, .primary:hover { background: var(--green-dark); }
 .primary.big { padding: 14px 26px; font-size: 1.05rem; }
 .ghost {
   background: transparent;
@@ -259,7 +262,7 @@ button { font-family: inherit; }
   color: var(--ink);
 }
 .ghost:hover { background: var(--bg); }
-.ghost.danger { color: var(--danger); border-color: #5a3b36; }
+.ghost.danger { color: var(--danger); border-color: #5a4b4a; }
 
 /* Card grid */
 .card-grid {
@@ -296,14 +299,14 @@ button { font-family: inherit; }
   justify-content: center;
 }
 .fav-star:hover { background: rgba(0, 0, 0, 0.75); }
-.fav-star.on { color: #ffd24a; }
+.fav-star.on { color: var(--rose); }
 /* Favorite toggle button inside the recipe modal */
-.fav-btn.on { color: #d9a521; border-color: #d9a521; }
+.fav-btn.on { color: var(--rose); border-color: var(--rose); }
 .card img {
   width: 100%;
   height: 150px;
   object-fit: cover;
-  background: #2a2620;
+  background: #383b35;
   cursor: pointer;
 }
 .card-body { padding: 12px 14px 14px; display: flex; flex-direction: column; gap: 8px; flex: 1; }
@@ -322,16 +325,16 @@ button { font-family: inherit; }
   font-weight: 600;
 }
 .add-btn:hover { background: var(--green-dark); }
-.add-btn.added { background: #2f3d33; color: #9ad4a9; }
+.add-btn.added { background: #35463b; color: #a9d9b0; }
 .remove-btn {
   background: transparent;
-  border: 1px solid #5a3b36;
+  border: 1px solid #5a4b4a;
   color: var(--danger);
   border-radius: 8px;
   padding: 9px 12px;
   cursor: pointer;
 }
-.remove-btn:hover { background: #3a2723; }
+.remove-btn:hover { background: #3c3336; }
 
 /* Section heads */
 .section-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
@@ -401,7 +404,7 @@ button { font-family: inherit; }
   padding: 2px 8px;
   border-radius: 999px;
   background: var(--accent);
-  color: #fff;
+  color: #21341a;
   white-space: nowrap;
   align-self: center;
   flex: none;
@@ -494,14 +497,14 @@ button { font-family: inherit; }
   bottom: 24px;
   left: 50%;
   transform: translateX(-50%);
-  background: #322d25;
+  background: #383b35;
   color: var(--ink);
   border: 1px solid var(--line);
   padding: 11px 20px;
   border-radius: 10px;
   font-size: 0.92rem;
   z-index: 50;
-  box-shadow: 0 6px 20px rgba(0,0,0,0.5);
+  box-shadow: 0 6px 20px rgba(0,0,0,0.35);
 }
 
 /* Modal */

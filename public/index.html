@@ -5,21 +5,21 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>At-Home Meal Planner</title>
     <link rel="stylesheet" href="style.css" />
-    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🍽️</text></svg>" />
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='22' fill='%231a1b16'/><circle cx='50' cy='46' r='24' fill='none' stroke='%23a6c199' stroke-width='6'/><line x1='50' y1='64' x2='50' y2='82' stroke='%23a6c199' stroke-width='6' stroke-linecap='round'/></svg>" />
   </head>
   <body>
     <header class="topbar">
-      <h1>🍽️ At-Home Meal Planner</h1>
+      <h1>At-Home Meal Planner</h1>
       <nav class="tabs">
         <button class="tab active" data-tab="plan">Planner <span id="planCount" class="pill">0</span></button>
         <button class="tab" data-tab="search">Find Recipes</button>
         <button class="tab" data-tab="grocery">Grocery List</button>
-        <button class="tab" data-tab="favorites">★ Favorites <span id="favCount" class="pill">0</span></button>
+        <button class="tab" data-tab="favorites">Favorites <span id="favCount" class="pill">0</span></button>
       </nav>
     </header>
 
     <div id="keyBanner" class="banner hidden">
-      ⚠️ No API key set yet. Add your free Spoonacular key to a <code>.env</code> file and restart the server. See the README.
+      No API key set yet. Add your free Spoonacular key to a <code>.env</code> file and restart the server. See the README.
     </div>
 
     <main>
@@ -27,11 +27,11 @@
       <section id="tab-search" class="panel">
         <div class="search-layout">
           <aside class="cat-sidebar" id="categoryChips">
-            <button type="button" class="chip active" data-type="">🍴 All</button>
-            <button type="button" class="chip" data-type="appetizer">🧀 Appetizers</button>
-            <button type="button" class="chip" data-type="soup">🍲 Soups</button>
-            <button type="button" class="chip" data-type="salad">🥗 Salads</button>
-            <button type="button" class="chip" data-type="main course">🍽 Entrées</button>
+            <button type="button" class="chip active" data-type="">All</button>
+            <button type="button" class="chip" data-type="appetizer">Appetizers</button>
+            <button type="button" class="chip" data-type="soup">Soups</button>
+            <button type="button" class="chip" data-type="salad">Salads</button>
+            <button type="button" class="chip" data-type="main course">Entrées</button>
           </aside>
           <div class="search-main">
             <form id="searchForm" class="search-bar">
@@ -43,16 +43,6 @@
               />
               <button type="submit">Search</button>
             </form>
-            <div class="filters">
-              <label class="cal-toggle">
-                <input type="checkbox" id="gfFilter" checked />
-                Gluten-free
-              </label>
-              <label class="cal-toggle">
-                <input type="checkbox" id="calFilter" />
-                Under 500 cal / serving
-              </label>
-            </div>
             <div id="targetBanner" class="target-banner"></div>
             <div id="staleNote" class="stale-note hidden"></div>
             <div id="results" class="card-grid"></div>
@@ -69,9 +59,9 @@
           <button id="nextMonth" class="nav-arrow" aria-label="Later weeks">▶</button>
         </div>
         <p class="hint">
-          Showing <strong>this week and the next four</strong>. Tap <strong>＋ Add dishes</strong> on a
+          Showing <strong>this week and the next four</strong>. Tap <strong>Add dishes</strong> on a
           week, pick recipes from <strong>Find Recipes</strong>, then make that week's grocery list.
-          Use ▶ to plan further ahead.
+          Use the arrows to plan further ahead.
         </p>
         <div id="weeksContainer"></div>
       </section>
@@ -103,19 +93,19 @@
         </div>
         <div id="groceryList"></div>
         <div id="groceryEmpty" class="empty">
-          Go to the <strong>Planner</strong>, add dishes to a week, then tap that week's <strong>🛒 List</strong>.
+          Go to the <strong>Planner</strong>, add dishes to a week, then tap that week's <strong>List</strong>.
         </div>
       </section>
 
       <!-- FAVORITES -->
       <section id="tab-favorites" class="panel">
         <div class="section-head">
-          <h2>★ Favorite recipes</h2>
+          <h2>Favorite recipes</h2>
         </div>
-        <p class="hint">Your saved recipes. Tap <strong>＋ Add to plan</strong> to drop one into the selected week.</p>
+        <p class="hint">Your saved recipes. Tap <strong>Add to plan</strong> to drop one into the selected week.</p>
         <div id="favList" class="card-grid"></div>
         <div id="favEmpty" class="empty">
-          No favorites yet. Tap the ☆ on any recipe to save it here.
+          No favorites yet. Tap the star on any recipe to save it here.
         </div>
       </section>
     </main>
