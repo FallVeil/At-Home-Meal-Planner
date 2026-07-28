@@ -13,6 +13,7 @@
   --danger: #d17d76;
   --shadow: 0 2px 14px rgba(0, 0, 0, 0.28);
   --radius: 14px;
+  --font-display: "Fraunces", Georgia, "Times New Roman", serif;
 }
 
 * { box-sizing: border-box; }
@@ -24,6 +25,17 @@ body {
   color: var(--ink);
   line-height: 1.5;
 }
+/* Subtle woven cross-hatch in the page background (behind all content). */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background-image:
+    repeating-linear-gradient(45deg, rgba(230, 236, 220, 0.022) 0 1px, transparent 1px 6px),
+    repeating-linear-gradient(-45deg, rgba(230, 236, 220, 0.018) 0 1px, transparent 1px 6px);
+}
 
 /* Top bar & tabs */
 .topbar {
@@ -34,7 +46,13 @@ body {
   top: 0;
   z-index: 20;
 }
-.topbar h1 { margin: 0 0 10px; font-size: 1.35rem; }
+.topbar h1 {
+  margin: 0 0 12px;
+  font-family: var(--font-display);
+  font-size: 1.5rem;
+  font-weight: 500;
+  letter-spacing: 0.005em;
+}
 .tabs { display: flex; gap: 4px; flex-wrap: wrap; }
 .tab {
   border: none;
@@ -110,14 +128,26 @@ main { max-width: 1000px; margin: 0 auto; padding: 22px 20px 80px; }
 
 /* "Adding to week X" banner on the search page */
 .target-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   margin: 14px 0 4px;
-  padding: 9px 13px;
-  background: #383f39;
-  border: 1px solid #4c554c;
-  border-radius: 10px;
-  font-size: 0.9rem;
+  flex-wrap: wrap;
 }
-.target-banner .muted-note { color: var(--muted); font-weight: 400; font-size: 0.83rem; }
+.target-banner .target-label { color: var(--muted); font-size: 0.9rem; white-space: nowrap; }
+.target-banner select {
+  flex: 1;
+  min-width: 150px;
+  max-width: 320px;
+  background: var(--card);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 8px 10px;
+  font-size: 0.95rem;
+  cursor: pointer;
+}
+.target-banner select:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
 
 /* "Load more recipes" button under the results grid */
 .load-more {
@@ -148,7 +178,7 @@ main { max-width: 1000px; margin: 0 auto; padding: 22px 20px 80px; }
 
 /* Planner: month navigation */
 .month-nav { display: flex; align-items: center; justify-content: center; gap: 14px; margin-bottom: 6px; }
-.month-nav h2 { margin: 0; font-size: 1.2rem; min-width: 180px; text-align: center; }
+.month-nav h2 { margin: 0; font-family: var(--font-display); font-weight: 500; font-size: 1.3rem; min-width: 180px; text-align: center; }
 .nav-arrow {
   border: 1px solid var(--line);
   background: var(--card);
@@ -304,28 +334,40 @@ button { font-family: inherit; }
 .fav-btn.on { color: var(--rose); border-color: var(--rose); }
 .card img {
   width: 100%;
-  height: 150px;
+  aspect-ratio: 3 / 2;
   object-fit: cover;
   background: #383b35;
   cursor: pointer;
 }
 .card-body { padding: 12px 14px 14px; display: flex; flex-direction: column; gap: 8px; flex: 1; }
-.card-title { font-weight: 600; font-size: 0.98rem; cursor: pointer; }
+.card-title {
+  font-family: var(--font-display);
+  font-weight: 500;
+  font-size: 1.05rem;
+  line-height: 1.25;
+  min-height: 2.5em;
+  cursor: pointer;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
 .card-title:hover { color: var(--accent); }
 .card-meta { color: var(--muted); font-size: 0.82rem; }
 .card-actions { margin-top: auto; display: flex; gap: 8px; }
 .add-btn {
   flex: 1;
-  background: var(--green);
-  color: #fff;
-  border: none;
+  background: transparent;
+  color: #a6d0b0;
+  border: 1px solid rgba(79, 140, 98, 0.5);
   padding: 9px;
   border-radius: 8px;
   cursor: pointer;
   font-weight: 600;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
 }
-.add-btn:hover { background: var(--green-dark); }
-.add-btn.added { background: #35463b; color: #a9d9b0; }
+.add-btn:hover { background: var(--green); color: #fff; border-color: var(--green); }
+.add-btn.added { background: #2c3a30; color: #9ec7a8; border-color: transparent; }
 .remove-btn {
   background: transparent;
   border: 1px solid #5a4b4a;
@@ -338,16 +380,16 @@ button { font-family: inherit; }
 
 /* Section heads */
 .section-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
-.section-head h2 { margin: 0; font-size: 1.25rem; }
+.section-head h2 { margin: 0; font-family: var(--font-display); font-weight: 500; font-size: 1.35rem; }
 .head-actions { display: flex; gap: 8px; }
 .actions { margin-top: 24px; text-align: center; }
 
 .empty {
   text-align: center;
   color: var(--muted);
-  padding: 48px 20px;
-  border: 2px dashed var(--line);
-  border-radius: var(--radius);
+  padding: 46px 24px;
+  font-size: 0.95rem;
+  line-height: 1.6;
 }
 
 /* Grocery week picker */
@@ -452,6 +494,27 @@ button { font-family: inherit; }
 .staples-header .chev { font-size: 0.75rem; }
 .staples-count { color: var(--muted); font-weight: 400; font-size: 0.78rem; text-transform: none; letter-spacing: normal; }
 
+/* Refinements: motion + hover interactions */
+.tab, .chip, .ghost, .nav-arrow, .search-bar button, .add-item button,
+.fav-star, .move-btn, .extra-remove, .add-btn {
+  transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease, opacity 0.15s ease;
+}
+.search-bar button:active, .add-item button:active, .add-btn:active,
+.chip:active, .ghost:active, .nav-arrow:active { transform: scale(0.97); }
+.grocery-item { transition: opacity 0.2s ease; }
+.grocery-item.checked { opacity: 0.5; }
+
+@media (hover: hover) {
+  .card { transition: transform 0.15s ease, box-shadow 0.15s ease; }
+  .card:hover { transform: translateY(-2px); box-shadow: 0 8px 20px rgba(0, 0, 0, 0.32); }
+  .grocery-item .move-wrap,
+  .grocery-item .extra-remove { opacity: 0; }
+  .grocery-item:hover .move-wrap,
+  .grocery-item:hover .extra-remove,
+  .grocery-item:focus-within .move-wrap,
+  .grocery-item:focus-within .extra-remove { opacity: 1; }
+}
+
 /* Recipe cooking steps in the modal */
 .steps { padding-left: 1.3em; margin: 8px 0 16px; }
 .steps li { padding: 5px 0 5px 4px; line-height: 1.55; }
@@ -529,7 +592,8 @@ button { font-family: inherit; }
   cursor: pointer; font-size: 1rem;
 }
 .modal-card img { width: 100%; border-radius: 10px; margin-bottom: 14px; }
-.modal-card h2 { margin-top: 0; }
+.modal-card h2 { margin-top: 0; font-family: var(--font-display); font-weight: 500; font-size: 1.5rem; line-height: 1.2; }
+.modal-card h3 { font-family: var(--font-display); font-weight: 500; }
 .ing-list { list-style: none; padding: 0; }
 .ing-list li { padding: 6px 0; border-bottom: 1px dashed var(--line); }
 
@@ -548,9 +612,7 @@ button { font-family: inherit; }
 
   /* Recipe cards: single column beside the rail so images stay legible. */
   .card-grid { grid-template-columns: 1fr; gap: 12px; }
-  .card img { height: 110px; }
-  .card-body { padding: 10px; }
-  .card-title { font-size: 0.9rem; }
+  .card-body { padding: 12px 14px; }
 
   /* Keep inputs at 16px+ so iOS doesn't auto-zoom on focus. */
   .search-bar input[type="search"], .search-bar select { font-size: 16px; }
@@ -567,7 +629,15 @@ button { font-family: inherit; }
 /* One-column cards on very narrow phones. */
 @media (max-width: 380px) {
   .card-grid { grid-template-columns: 1fr; }
-  .card img { height: 150px; }
+}
+
+/* Fine film grain on the lighter card surfaces (placed last so it layers over
+   each surface's --card background-color rather than being reset by it). */
+.card,
+.week-block,
+.topbar,
+.modal-card {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23g)' opacity='0.07'/%3E%3C/svg%3E");
 }
 
 @media print {

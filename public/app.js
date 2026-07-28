@@ -284,8 +284,15 @@ document.querySelectorAll("#categoryChips .chip").forEach((chip) => {
 
 // Snapshot of the active search so "load more" repeats the same filters.
 let currentSearch = null;
+let currentResults = []; // accumulated results, for re-rendering on target-week change
 let searchOffset = 0;
 let searchHasMore = false;
+
+function rerenderSearchResults() {
+  if (!currentResults.length) return;
+  results.innerHTML = "";
+  currentResults.forEach((r) => results.appendChild(recipeCard(r, "search")));
+}
 
 async function runSearch() {
   currentSearch = {
@@ -326,11 +333,17 @@ async function fetchSearchPage(reset) {
       staleNote.classList.add("hidden");
     }
 
-    if (reset) results.innerHTML = "";
-    if (reset && (!data.results || !data.results.length)) {
+    const list = data.results || [];
+    if (reset) {
+      results.innerHTML = "";
+      currentResults = list.slice();
+    } else {
+      currentResults = currentResults.concat(list);
+    }
+    if (reset && !list.length) {
       results.innerHTML = `<div class="empty">No recipes found. Try a different search or category.</div>`;
     } else {
-      (data.results || []).forEach((r) => results.appendChild(recipeCard(r, "search")));
+      list.forEach((r) => results.appendChild(recipeCard(r, "search")));
     }
     searchOffset = data.nextOffset ?? searchOffset + 12;
     searchHasMore = Boolean(data.hasMore);
@@ -356,11 +369,37 @@ function renderLoadMore() {
 }
 $("#loadMore").addEventListener("click", () => fetchSearchPage(false));
 
+// Weeks offered in the "adding to" picker: this week + next four, plus any
+// future week that already has dishes, plus the current target.
+function weekPickerOptions() {
+  const weeks = new Set();
+  const today = startOfWeek(new Date());
+  const thisWeekKey = isoDate(today);
+  for (let i = 0; i < WEEKS_SHOWN; i++) {
+    weeks.add(isoDate(new Date(today.getFullYear(), today.getMonth(), today.getDate() + i * 7)));
+  }
+  Object.keys(plan).forEach((k) => k >= thisWeekKey && weekDishes(k).length && weeks.add(k));
+  if (targetWeek) weeks.add(targetWeek);
+  return [...weeks].sort();
+}
+
 function updateTargetBanner() {
   const banner = $("#targetBanner");
-  const monday = parseKey(targetWeek);
-  const label = isThisWeek(targetWeek) ? "this week" : `week of ${fmtRange(monday)}`;
-  banner.innerHTML = `Adding dishes to <strong>${escapeHtml(label)}</strong> <span class="muted-note">— change in Planner</span>`;
+  const opts = weekPickerOptions()
+    .map((k) => {
+      const dishes = weekDishes(k).length;
+      const label =
+        (isThisWeek(k) ? `This week (${fmtRange(parseKey(k))})` : fmtRange(parseKey(k))) +
+        (dishes ? ` — ${dishes} dish${dishes === 1 ? "" : "es"}` : "");
+      return `<option value="${k}"${k === targetWeek ? " selected" : ""}>${escapeHtml(label)}</option>`;
+    })
+    .join("");
+  banner.innerHTML = `<span class="target-label">Adding to</span><select id="targetSelect" aria-label="Week to add dishes to">${opts}</select>`;
+  $("#targetSelect").addEventListener("change", (e) => {
+    targetWeek = e.target.value;
+    updateTargetBanner();
+    rerenderSearchResults();
+  });
 }
 
 // ============================================================
@@ -1091,11 +1130,16 @@ async function showRecipe(id) {
 //  Helpers
 // ============================================================
 function updatePlanCount() {
-  $("#planCount").textContent = totalDishes();
+  const el = $("#planCount");
+  const n = totalDishes();
+  el.textContent = n;
+  el.style.display = n ? "" : "none";
 }
 function updateFavCount() {
   const el = $("#favCount");
-  if (el) el.textContent = favorites.length;
+  if (!el) return;
+  el.textContent = favorites.length;
+  el.style.display = favorites.length ? "" : "none";
 }
 function toast(msg) {
   const el = $("#toast");
