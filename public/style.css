@@ -45,15 +45,42 @@ body::before {
   position: sticky;
   top: 0;
   z-index: 20;
+  overflow: hidden;
 }
 .topbar h1 {
+  position: relative;
+  z-index: 1;
   margin: 0 0 12px;
   font-family: var(--font-display);
   font-size: 1.5rem;
   font-weight: 500;
   letter-spacing: 0.005em;
 }
-.tabs { display: flex; gap: 4px; flex-wrap: wrap; }
+.topbar .tabs { position: relative; z-index: 1; }
+.header-art {
+  position: absolute;
+  top: 13px;
+  right: 12px;
+  height: clamp(34px, 6.5vw, 64px);
+  width: auto;
+  z-index: 0;
+  pointer-events: none;
+  transform: rotate(-6deg);
+  transform-origin: center;
+}
+.header-art .stem { stroke: var(--accent); stroke-width: 2; stroke-linecap: round; fill: none; opacity: 0.42; }
+.header-art .leaf { fill: var(--accent); opacity: 0.26; }
+.header-art .vein { stroke: var(--accent); stroke-width: 0.6; fill: none; opacity: 0.4; }
+.tabs {
+  display: flex;
+  gap: 4px;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.tabs::-webkit-scrollbar { display: none; }
 .tab {
   border: none;
   background: transparent;
@@ -63,6 +90,8 @@ body::before {
   cursor: pointer;
   border-bottom: 3px solid transparent;
   border-radius: 8px 8px 0 0;
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 .tab:hover { color: var(--ink); background: var(--bg); }
 .tab.active { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
@@ -494,6 +523,69 @@ button { font-family: inherit; }
 .staples-header .chev { font-size: 0.75rem; }
 .staples-count { color: var(--muted); font-weight: 400; font-size: 0.78rem; text-transform: none; letter-spacing: normal; }
 
+/* Notes */
+.add-note { display: flex; flex-direction: column; gap: 10px; margin-bottom: 20px; }
+.add-note textarea {
+  width: 100%;
+  resize: vertical;
+  min-height: 62px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--card);
+  color: var(--ink);
+  font: inherit;
+  font-size: 16px;
+  line-height: 1.5;
+}
+.add-note textarea::placeholder { color: var(--muted); }
+.add-note textarea:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.add-note button {
+  align-self: flex-start;
+  background: var(--green);
+  color: #fff;
+  border: none;
+  padding: 10px 22px;
+  border-radius: 10px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.add-note button:hover { background: var(--green-dark); }
+.note-card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 14px 16px;
+  margin-bottom: 12px;
+  box-shadow: var(--shadow);
+}
+.note-text { white-space: pre-wrap; word-break: break-word; line-height: 1.55; cursor: text; }
+.note-edit {
+  width: 100%;
+  resize: vertical;
+  min-height: 60px;
+  padding: 8px 10px;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--ink);
+  font: inherit;
+  font-size: 16px;
+  line-height: 1.55;
+}
+.note-foot { display: flex; align-items: center; justify-content: space-between; margin-top: 10px; }
+.note-time { color: var(--muted); font-size: 0.78rem; }
+.note-del {
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 0.95rem;
+  padding: 2px 6px;
+  border-radius: 6px;
+}
+.note-del:hover { color: var(--danger); }
+
 /* Refinements: motion + hover interactions */
 .tab, .chip, .ghost, .nav-arrow, .search-bar button, .add-item button,
 .fav-star, .move-btn, .extra-remove, .add-btn {
@@ -631,12 +723,18 @@ button { font-family: inherit; }
   .card-grid { grid-template-columns: 1fr; }
 }
 
+/* Very narrow phones: drop the header sprig so the title has room. */
+@media (max-width: 360px) {
+  .header-art { display: none; }
+}
+
 /* Fine film grain on the lighter card surfaces (placed last so it layers over
    each surface's --card background-color rather than being reset by it). */
 .card,
 .week-block,
 .topbar,
-.modal-card {
+.modal-card,
+.note-card {
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23g)' opacity='0.07'/%3E%3C/svg%3E");
 }
 

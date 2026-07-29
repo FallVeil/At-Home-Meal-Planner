@@ -117,10 +117,11 @@ function scheduleFavPush() {
 async function refreshFromServer() {
   if (!syncEnabled) return;
   try {
-    const [pr, fr, gr] = await Promise.all([
+    const [pr, fr, gr, nr] = await Promise.all([
       fetch("/api/plan").then((r) => r.json()),
       fetch("/api/favorites").then((r) => r.json()),
       fetch("/api/grocery").then((r) => r.json()),
+      fetch("/api/notes").then((r) => r.json()),
     ]);
     if (pr.enabled && pr.plan) {
       plan = pr.plan;
@@ -136,11 +137,17 @@ async function refreshFromServer() {
       grocery = gr.grocery;
       localStorage.setItem(GROCERY_KEY, JSON.stringify(grocery));
     }
+    if (nr.enabled && Array.isArray(nr.notes)) {
+      notes = nr.notes;
+      localStorage.setItem(NOTES_KEY, JSON.stringify(notes));
+      updateNotesCount();
+    }
     if ($("#tab-plan").classList.contains("active")) renderPlanner();
     if ($("#tab-favorites").classList.contains("active")) renderFavorites();
     if ($("#tab-grocery").classList.contains("active") && groceryWeek) {
       renderGrocery(lastGroceryRecipes, groceryWeek);
     }
+    if ($("#tab-notes").classList.contains("active")) renderNotes();
   } catch {
     /* offline/transient — keep local copy */
   }
@@ -150,10 +157,11 @@ async function refreshFromServer() {
 async function initSync() {
   if (!syncEnabled) return;
   try {
-    const [pr, fr, gr] = await Promise.all([
+    const [pr, fr, gr, nr] = await Promise.all([
       fetch("/api/plan").then((r) => r.json()),
       fetch("/api/favorites").then((r) => r.json()),
       fetch("/api/grocery").then((r) => r.json()),
+      fetch("/api/notes").then((r) => r.json()),
     ]);
     if (pr.enabled) {
       const serverPlan = pr.plan || {};
@@ -182,8 +190,18 @@ async function initSync() {
         scheduleGroceryPush();
       }
     }
+    if (nr.enabled) {
+      const serverNotes = nr.notes || [];
+      if (serverNotes.length) {
+        notes = serverNotes;
+        localStorage.setItem(NOTES_KEY, JSON.stringify(notes));
+      } else if (notes.length) {
+        scheduleNotesPush();
+      }
+    }
     updatePlanCount();
     updateFavCount();
+    updateNotesCount();
     renderPlanner();
   } catch {
     /* ignore */
@@ -253,6 +271,10 @@ function activateTab(name) {
   if (name === "grocery") {
     populateGrocerySelect();
     loadGroceryWeek(groceryWeek || weekKeyOf(new Date()));
+    refreshFromServer();
+  }
+  if (name === "notes") {
+    renderNotes();
     refreshFromServer();
   }
 }
@@ -1000,6 +1022,124 @@ $("#printList").addEventListener("click", () => {
 });
 
 // ============================================================
+//  Notes (shared jottings — reminders, ideas, what to restock)
+// ============================================================
+const NOTES_KEY = "mealPlanner.notes.v1";
+let notes = loadNotes();
+let notesPushTimer = null;
+
+function loadNotes() {
+  try {
+    const n = JSON.parse(localStorage.getItem(NOTES_KEY));
+    return Array.isArray(n) ? n : [];
+  } catch {
+    return [];
+  }
+}
+function saveNotes() {
+  localStorage.setItem(NOTES_KEY, JSON.stringify(notes));
+  updateNotesCount();
+  scheduleNotesPush();
+}
+function scheduleNotesPush() {
+  if (!syncEnabled) return;
+  clearTimeout(notesPushTimer);
+  notesPushTimer = setTimeout(() => {
+    fetch("/api/notes", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ notes }),
+    }).catch(() => {});
+  }, 700);
+}
+function updateNotesCount() {
+  const el = $("#notesCount");
+  if (!el) return;
+  el.textContent = notes.length;
+  el.style.display = notes.length ? "" : "none";
+}
+function fmtNoteTime(ts) {
+  return new Date(ts).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+function renderNotes() {
+  const list = $("#notesList");
+  list.innerHTML = "";
+  if (!notes.length) {
+    $("#notesEmpty").classList.remove("hidden");
+    return;
+  }
+  $("#notesEmpty").classList.add("hidden");
+  [...notes]
+    .sort((a, b) => (b.ts || 0) - (a.ts || 0))
+    .forEach((note) => list.appendChild(noteCard(note)));
+}
+
+function noteCard(note) {
+  const card = document.createElement("div");
+  card.className = "note-card";
+
+  const text = document.createElement("div");
+  text.className = "note-text";
+  text.textContent = note.text;
+  text.title = "Tap to edit";
+  text.addEventListener("click", () => startEditNote(card, note, text));
+
+  const foot = document.createElement("div");
+  foot.className = "note-foot";
+  const time = document.createElement("span");
+  time.className = "note-time";
+  time.textContent = note.ts ? "updated " + fmtNoteTime(note.ts) : "";
+  const del = document.createElement("button");
+  del.className = "note-del";
+  del.setAttribute("aria-label", "Delete note");
+  del.textContent = "✕";
+  del.addEventListener("click", () => {
+    notes = notes.filter((n) => n.id !== note.id);
+    saveNotes();
+    renderNotes();
+  });
+  foot.append(time, del);
+  card.append(text, foot);
+  return card;
+}
+
+function startEditNote(card, note, textEl) {
+  const ta = document.createElement("textarea");
+  ta.className = "note-edit";
+  ta.value = note.text;
+  card.replaceChild(ta, textEl);
+  ta.focus();
+  ta.setSelectionRange(ta.value.length, ta.value.length);
+  ta.addEventListener("blur", () => {
+    const val = ta.value.trim();
+    if (val === note.text) return renderNotes();
+    if (!val) notes = notes.filter((n) => n.id !== note.id);
+    else {
+      note.text = val;
+      note.ts = Date.now();
+    }
+    saveNotes();
+    renderNotes();
+  });
+}
+
+$("#addNoteForm").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const input = $("#addNoteInput");
+  const val = input.value.trim();
+  if (!val) return;
+  notes.push({
+    id: Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
+    text: val,
+    ts: Date.now(),
+  });
+  saveNotes();
+  input.value = "";
+  renderNotes();
+});
+
+// ============================================================
 //  Recipe detail modal
 // ============================================================
 const modal = $("#modal");
@@ -1131,6 +1271,7 @@ async function showRecipe(id) {
 // ============================================================
 function updatePlanCount() {
   const el = $("#planCount");
+  if (!el) return;
   const n = totalDishes();
   el.textContent = n;
   el.style.display = n ? "" : "none";
@@ -1184,6 +1325,7 @@ function placeholder() {
 async function init() {
   updatePlanCount();
   updateFavCount();
+  updateNotesCount();
   updateTargetBanner();
   renderPlanner();
   try {
