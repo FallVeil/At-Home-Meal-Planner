@@ -34,6 +34,7 @@
         <button class="tab" data-tab="grocery">Grocery List</button>
         <button class="tab" data-tab="favorites">Favorites</button>
         <button class="tab" data-tab="notes">Notes</button>
+        <button class="tab" data-tab="chores">Chores</button>
       </nav>
     </header>
 
@@ -60,7 +61,12 @@
                 placeholder="Search dishes, ingredients… e.g. chicken pasta, tacos, salmon"
                 autocomplete="off"
               />
-              <button type="submit">Search</button>
+              <button type="submit" aria-label="Search">
+                <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                  <circle cx="10.5" cy="10.5" r="7" />
+                  <line x1="15.6" y1="15.6" x2="21" y2="21" />
+                </svg>
+              </button>
             </form>
             <div id="targetBanner" class="target-banner"></div>
             <div id="staleNote" class="stale-note hidden"></div>
@@ -146,6 +152,38 @@
           No notes yet. Jot down reminders, meal ideas, or what to restock.
         </div>
       </section>
+
+      <!-- CHORES / HABITS -->
+      <section id="tab-chores" class="panel">
+        <div class="section-head">
+          <h2>Chores &amp; habits</h2>
+        </div>
+        <div class="chip-row" id="choreView">
+          <button type="button" class="chip active" data-view="list">Checklist</button>
+          <button type="button" class="chip" data-view="history">History</button>
+        </div>
+        <div class="chip-row" id="choreFilter"></div>
+        <div id="choreChecklist">
+          <form id="addChoreForm" class="add-chore">
+            <input id="addChoreInput" type="text" placeholder="Add a chore or habit…" autocomplete="off" />
+            <input id="addChoreCat" type="text" list="choreCatList" placeholder="Room / category" autocomplete="off" />
+            <datalist id="choreCatList"></datalist>
+            <select id="addChorePerson" aria-label="Assign to"></select>
+            <button type="submit">Add</button>
+          </form>
+          <div id="choreList"></div>
+          <div id="choreEmpty" class="empty">
+            No items yet. Add a daily chore or habit to start tracking.
+          </div>
+        </div>
+        <div id="choreHistory" class="hidden">
+          <div class="chip-row" id="historyRange">
+            <button type="button" class="chip active" data-range="week">This week</button>
+            <button type="button" class="chip" data-range="month">This month</button>
+          </div>
+          <div id="historyGrid" class="history-wrap"></div>
+        </div>
+      </section>
     </main>
 
     <div id="toast" class="toast hidden"></div>
@@ -156,6 +194,15 @@
         <button id="modalClose" class="modal-close">✕</button>
         <div id="modalBody"></div>
       </div>
+    </div>
+
+    <!-- Full-screen note editor -->
+    <div id="noteEditor" class="note-editor hidden">
+      <div class="note-editor-bar">
+        <button id="noteEditorCancel" class="ghost">Cancel</button>
+        <button id="noteEditorSave" class="primary">Save</button>
+      </div>
+      <textarea id="noteEditorInput" placeholder="Write your note…"></textarea>
     </div>
 
     <script src="app.js"></script>

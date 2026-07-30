@@ -265,6 +265,23 @@ app.put("/api/notes", async (req, res) => {
     res.status(502).json({ error: "Could not save notes." });
   }
 });
+app.get("/api/tracker", async (req, res) => {
+  if (!storageEnabled) return res.json({ enabled: false });
+  try {
+    res.json({ enabled: true, tracker: (await redisGetJSON("meal:tracker")) || null });
+  } catch {
+    res.status(502).json({ error: "Could not read the tracker." });
+  }
+});
+app.put("/api/tracker", async (req, res) => {
+  if (!storageEnabled) return res.json({ enabled: false });
+  try {
+    await redisSetJSON("meal:tracker", req.body?.tracker || {});
+    res.json({ ok: true });
+  } catch {
+    res.status(502).json({ error: "Could not save the tracker." });
+  }
+});
 
 // Search recipes by title/keyword, optionally within a dish-type category.
 //   type=appetizer|soup|salad|main course -> category filter

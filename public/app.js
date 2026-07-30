@@ -117,11 +117,12 @@ function scheduleFavPush() {
 async function refreshFromServer() {
   if (!syncEnabled) return;
   try {
-    const [pr, fr, gr, nr] = await Promise.all([
+    const [pr, fr, gr, nr, tr] = await Promise.all([
       fetch("/api/plan").then((r) => r.json()),
       fetch("/api/favorites").then((r) => r.json()),
       fetch("/api/grocery").then((r) => r.json()),
       fetch("/api/notes").then((r) => r.json()),
+      fetch("/api/tracker").then((r) => r.json()),
     ]);
     if (pr.enabled && pr.plan) {
       plan = pr.plan;
@@ -142,12 +143,17 @@ async function refreshFromServer() {
       localStorage.setItem(NOTES_KEY, JSON.stringify(notes));
       updateNotesCount();
     }
+    if (tr.enabled && tr.tracker && Array.isArray(tr.tracker.items)) {
+      tracker = { items: tr.tracker.items };
+      localStorage.setItem(TRACKER_KEY, JSON.stringify(tracker));
+    }
     if ($("#tab-plan").classList.contains("active")) renderPlanner();
     if ($("#tab-favorites").classList.contains("active")) renderFavorites();
     if ($("#tab-grocery").classList.contains("active") && groceryWeek) {
       renderGrocery(lastGroceryRecipes, groceryWeek);
     }
     if ($("#tab-notes").classList.contains("active")) renderNotes();
+    if ($("#tab-chores").classList.contains("active")) renderActiveChoreView();
   } catch {
     /* offline/transient — keep local copy */
   }
@@ -157,11 +163,12 @@ async function refreshFromServer() {
 async function initSync() {
   if (!syncEnabled) return;
   try {
-    const [pr, fr, gr, nr] = await Promise.all([
+    const [pr, fr, gr, nr, tr] = await Promise.all([
       fetch("/api/plan").then((r) => r.json()),
       fetch("/api/favorites").then((r) => r.json()),
       fetch("/api/grocery").then((r) => r.json()),
       fetch("/api/notes").then((r) => r.json()),
+      fetch("/api/tracker").then((r) => r.json()),
     ]);
     if (pr.enabled) {
       const serverPlan = pr.plan || {};
@@ -197,6 +204,15 @@ async function initSync() {
         localStorage.setItem(NOTES_KEY, JSON.stringify(notes));
       } else if (notes.length) {
         scheduleNotesPush();
+      }
+    }
+    if (tr.enabled) {
+      const st = tr.tracker;
+      if (st && Array.isArray(st.items) && st.items.length) {
+        tracker = { items: st.items };
+        localStorage.setItem(TRACKER_KEY, JSON.stringify(tracker));
+      } else if (tracker.items.length) {
+        scheduleTrackerPush();
       }
     }
     updatePlanCount();
@@ -275,6 +291,10 @@ function activateTab(name) {
   }
   if (name === "notes") {
     renderNotes();
+    refreshFromServer();
+  }
+  if (name === "chores") {
+    renderActiveChoreView();
     refreshFromServer();
   }
 }
@@ -1083,7 +1103,7 @@ function noteCard(note) {
   text.className = "note-text";
   text.textContent = note.text;
   text.title = "Tap to edit";
-  text.addEventListener("click", () => startEditNote(card, note, text));
+  text.addEventListener("click", () => openNoteEditor(note));
 
   const foot = document.createElement("div");
   foot.className = "note-foot";
@@ -1104,16 +1124,24 @@ function noteCard(note) {
   return card;
 }
 
-function startEditNote(card, note, textEl) {
-  const ta = document.createElement("textarea");
-  ta.className = "note-edit";
+// Full-screen note editor (bigger writing space than the inline card).
+let editingNoteId = null;
+function openNoteEditor(note) {
+  editingNoteId = note.id;
+  const ta = $("#noteEditorInput");
   ta.value = note.text;
-  card.replaceChild(ta, textEl);
+  $("#noteEditor").classList.remove("hidden");
   ta.focus();
   ta.setSelectionRange(ta.value.length, ta.value.length);
-  ta.addEventListener("blur", () => {
-    const val = ta.value.trim();
-    if (val === note.text) return renderNotes();
+}
+function closeNoteEditor() {
+  $("#noteEditor").classList.add("hidden");
+  editingNoteId = null;
+}
+function saveNoteEditor() {
+  const note = notes.find((n) => n.id === editingNoteId);
+  if (note) {
+    const val = $("#noteEditorInput").value.trim();
     if (!val) notes = notes.filter((n) => n.id !== note.id);
     else {
       note.text = val;
@@ -1121,8 +1149,345 @@ function startEditNote(card, note, textEl) {
     }
     saveNotes();
     renderNotes();
+  }
+  closeNoteEditor();
+}
+$("#noteEditorSave").addEventListener("click", saveNoteEditor);
+$("#noteEditorCancel").addEventListener("click", closeNoteEditor);
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !$("#noteEditor").classList.contains("hidden")) closeNoteEditor();
+});
+
+// ============================================================
+//  Chores & habits (daily checklist, per-person, with streaks)
+// ============================================================
+const TRACKER_KEY = "mealPlanner.tracker.v1";
+const PEOPLE = ["Andrew", "Katie"];
+const CHORE_CAT_ORDER = ["General", "Living room", "Kitchen", "Bedroom", "Bathroom", "Outside"];
+let tracker = loadTracker(); // { items: [{id,name,person,category,dates:[]}] }
+let trackerPushTimer = null;
+let choreFilter = "all"; // "all" | 0 | 1
+let choreViewMode = "list"; // "list" | "history"
+let historyRange = "week"; // "week" | "month"
+const choreCollapsed = new Set(); // collapsed category names in the checklist
+
+// Your chores from House Chores.xlsx, grouped by room (seeded once).
+function buildDefaultChores() {
+  const data = [
+    ["General", ["Vacuum", "Take out trash", "Start laundry", "Fold laundry", "Put away laundry", "Water plants"]],
+    ["Living room", ["Pick up", "Dust", "Vacuum"]],
+    ["Kitchen", ["Cook", "Clean counters", "Dishes", "Sweep", "Mop", "Vacuum"]],
+    ["Bedroom", ["Make bed", "Pick up", "Dust", "Vacuum"]],
+    ["Bathroom", ["Pick up", "Wipe surfaces", "Vacuum", "Mop", "Clean toilet", "Clean shower"]],
+    ["Outside", ["Pick up poop", "Mow back yard", "Mow front yard", "Weedwhack", "Trim hedges"]],
+  ];
+  let n = 0;
+  const items = [];
+  data.forEach(([category, names]) =>
+    names.forEach((name) => items.push({ id: "seed-" + n++, name, person: null, category, dates: [] }))
+  );
+  return items;
+}
+function maybeSeedChores() {
+  if (localStorage.getItem("mealPlanner.tracker.seeded")) return;
+  localStorage.setItem("mealPlanner.tracker.seeded", "1");
+  if (tracker.items.length) return; // server/local already has data — don't seed
+  tracker.items = buildDefaultChores();
+  saveTracker();
+}
+
+function loadTracker() {
+  try {
+    const t = JSON.parse(localStorage.getItem(TRACKER_KEY));
+    if (t && typeof t === "object" && Array.isArray(t.items)) return { items: t.items };
+  } catch {
+    /* ignore */
+  }
+  return { items: [] };
+}
+function saveTracker() {
+  localStorage.setItem(TRACKER_KEY, JSON.stringify(tracker));
+  scheduleTrackerPush();
+}
+function scheduleTrackerPush() {
+  if (!syncEnabled) return;
+  clearTimeout(trackerPushTimer);
+  trackerPushTimer = setTimeout(() => {
+    fetch("/api/tracker", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tracker }),
+    }).catch(() => {});
+  }, 700);
+}
+
+const choreDoneToday = (item) => (item.dates || []).includes(isoDate(new Date()));
+function choreStreak(item) {
+  const set = new Set(item.dates || []);
+  const d = new Date();
+  if (!set.has(isoDate(d))) d.setDate(d.getDate() - 1); // not done today: streak runs through yesterday
+  let s = 0;
+  while (set.has(isoDate(d))) {
+    s++;
+    d.setDate(d.getDate() - 1);
+  }
+  return s;
+}
+function toggleChoreDate(item, key) {
+  const set = new Set(item.dates || []);
+  set.has(key) ? set.delete(key) : set.add(key);
+  item.dates = [...set].sort();
+  saveTracker();
+}
+function toggleChore(item) {
+  toggleChoreDate(item, isoDate(new Date()));
+}
+function flameIcon() {
+  return `<svg viewBox="0 0 24 24" width="11" height="11" aria-hidden="true"><path fill="currentColor" d="M12 23a7 7 0 0 1-7-7c0-2.2 1.1-4.1 2.6-6C9 8 10 6 10 3.2c3 2 4.4 4 5 6.2C15.6 11.6 19 13.5 19 16a7 7 0 0 1-7 7z"/></svg>`;
+}
+
+function renderChores() {
+  renderChoreFilter();
+  renderChoreAssigneeOptions();
+  renderChoreCatOptions();
+
+  const list = $("#choreList");
+  list.innerHTML = "";
+  const items = tracker.items.filter((it) => choreFilter === "all" || it.person === choreFilter);
+  if (!items.length) {
+    $("#choreEmpty").textContent = tracker.items.length
+      ? "Nothing assigned here."
+      : "No items yet. Add a daily chore or habit to start tracking.";
+    $("#choreEmpty").classList.remove("hidden");
+    return;
+  }
+  $("#choreEmpty").classList.add("hidden");
+
+  const groups = {};
+  items.forEach((it) => {
+    const c = (it.category || "").trim();
+    (groups[c] ||= []).push(it);
+  });
+  Object.keys(groups)
+    .sort(choreCatSort)
+    .forEach((cat) => {
+      const collapsed = choreCollapsed.has(cat);
+      const section = document.createElement("div");
+      section.className = "chore-group" + (collapsed ? " collapsed" : "");
+      const header = document.createElement("h3");
+      header.className = "chore-cat";
+      header.innerHTML = `<span class="chev">${collapsed ? "▸" : "▾"}</span> ${escapeHtml(cat || "Other")} <span class="cat-count">${groups[cat].length}</span>`;
+      header.addEventListener("click", () => {
+        choreCollapsed.has(cat) ? choreCollapsed.delete(cat) : choreCollapsed.add(cat);
+        renderChores();
+      });
+      const itemsWrap = document.createElement("div");
+      itemsWrap.className = "chore-items";
+      groups[cat].forEach((it) => itemsWrap.appendChild(choreRow(it)));
+      section.append(header, itemsWrap);
+      list.appendChild(section);
+    });
+}
+function choreCatSort(a, b) {
+  const rank = (c) => {
+    const i = CHORE_CAT_ORDER.indexOf(c);
+    return i !== -1 ? i : c === "" ? 9999 : 5000;
+  };
+  const ra = rank(a);
+  const rb = rank(b);
+  return ra !== rb ? ra - rb : a.localeCompare(b);
+}
+function renderChoreCatOptions() {
+  const dl = $("#choreCatList");
+  if (!dl) return;
+  const cats = [...new Set(tracker.items.map((it) => (it.category || "").trim()).filter(Boolean))];
+  CHORE_CAT_ORDER.forEach((c) => {
+    if (!cats.includes(c)) cats.push(c);
+  });
+  dl.innerHTML = cats.map((c) => `<option value="${escapeHtml(c)}"></option>`).join("");
+}
+
+function renderChoreFilter() {
+  const el = $("#choreFilter");
+  el.innerHTML = "";
+  const opts = [
+    { v: "all", label: "All" },
+    { v: 0, label: PEOPLE[0] },
+    { v: 1, label: PEOPLE[1] },
+  ];
+  opts.forEach((o) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "chip" + (String(choreFilter) === String(o.v) ? " active" : "");
+    b.textContent = o.label;
+    b.addEventListener("click", () => {
+      choreFilter = o.v;
+      renderActiveChoreView();
+    });
+    el.appendChild(b);
   });
 }
+
+function renderActiveChoreView() {
+  if (choreViewMode === "history") renderHistory();
+  else renderChores();
+}
+
+function renderChoreAssigneeOptions() {
+  const sel = $("#addChorePerson");
+  const prev = sel.value;
+  sel.innerHTML = "";
+  const add = (v, label) => {
+    const o = document.createElement("option");
+    o.value = v;
+    o.textContent = label;
+    sel.appendChild(o);
+  };
+  add("", "Anyone");
+  add("0", PEOPLE[0]);
+  add("1", PEOPLE[1]);
+  if ([...sel.options].some((o) => o.value === prev)) sel.value = prev;
+}
+
+function choreRow(item) {
+  const row = document.createElement("div");
+  const done = choreDoneToday(item);
+  row.className = "chore-item" + (done ? " done" : "");
+  const id = "ch-" + item.id;
+  const streak = choreStreak(item);
+  const personName = item.person === 0 || item.person === 1 ? PEOPLE[item.person] : "";
+  row.innerHTML = `
+    <input type="checkbox" id="${id}" ${done ? "checked" : ""} />
+    <label class="chore-name" for="${id}">${escapeHtml(item.name)}</label>
+    <span class="chore-tags">
+      ${streak > 0 ? `<span class="streak-pill" title="${streak}-day streak">${flameIcon()} ${streak}</span>` : ""}
+      ${personName ? `<span class="assignee-pill">${escapeHtml(personName)}</span>` : ""}
+    </span>
+    <button class="chore-del" aria-label="Delete">✕</button>`;
+  row.querySelector("input").addEventListener("change", () => {
+    toggleChore(item);
+    renderChores();
+  });
+  row.querySelector(".chore-del").addEventListener("click", () => {
+    tracker.items = tracker.items.filter((x) => x.id !== item.id);
+    saveTracker();
+    renderChores();
+  });
+  return row;
+}
+
+$("#addChoreForm").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const input = $("#addChoreInput");
+  const name = input.value.trim();
+  if (!name) return;
+  const pv = $("#addChorePerson").value;
+  tracker.items.push({
+    id: Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
+    name,
+    person: pv === "" ? null : Number(pv),
+    category: $("#addChoreCat").value.trim(),
+    dates: [],
+  });
+  saveTracker();
+  input.value = ""; // keep the category so you can add several to the same room
+  renderChores();
+  input.focus();
+});
+
+document.querySelectorAll("#choreView .chip").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    choreViewMode = btn.dataset.view;
+    document.querySelectorAll("#choreView .chip").forEach((b) => b.classList.toggle("active", b === btn));
+    $("#choreChecklist").classList.toggle("hidden", choreViewMode !== "list");
+    $("#choreHistory").classList.toggle("hidden", choreViewMode !== "history");
+    renderActiveChoreView();
+  });
+});
+document.querySelectorAll("#historyRange .chip").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    historyRange = btn.dataset.range;
+    document.querySelectorAll("#historyRange .chip").forEach((b) => b.classList.toggle("active", b === btn));
+    renderHistory();
+  });
+});
+
+function historyDays() {
+  const now = new Date();
+  const out = [];
+  if (historyRange === "month") {
+    const y = now.getFullYear();
+    const m = now.getMonth();
+    const last = new Date(y, m + 1, 0).getDate();
+    for (let d = 1; d <= last; d++) out.push(new Date(y, m, d));
+  } else {
+    const start = startOfWeek(now);
+    for (let i = 0; i < 7; i++) {
+      out.push(new Date(start.getFullYear(), start.getMonth(), start.getDate() + i));
+    }
+  }
+  return out;
+}
+
+function renderHistory() {
+  renderChoreFilter();
+  const wrap = $("#historyGrid");
+  wrap.innerHTML = "";
+  const items = tracker.items.filter((it) => choreFilter === "all" || it.person === choreFilter);
+  if (!items.length) {
+    wrap.innerHTML = `<div class="empty">No chores to show yet.</div>`;
+    return;
+  }
+  const days = historyDays();
+  const todayKey = isoDate(new Date());
+  const WD = ["M", "T", "W", "T", "F", "S", "S"];
+
+  const groups = {};
+  items.forEach((it) => {
+    const c = (it.category || "").trim();
+    (groups[c] ||= []).push(it);
+  });
+
+  let head = `<thead><tr><th class="hist-name-h"></th>`;
+  days.forEach((d) => {
+    const isToday = isoDate(d) === todayKey;
+    head += `<th class="hist-day${isToday ? " today" : ""}"><span class="wd">${WD[(d.getDay() + 6) % 7]}</span><span class="dn">${d.getDate()}</span></th>`;
+  });
+  head += `</tr></thead>`;
+
+  let body = `<tbody>`;
+  Object.keys(groups)
+    .sort(choreCatSort)
+    .forEach((cat) => {
+      body += `<tr class="hist-room"><td colspan="${days.length + 1}">${escapeHtml(cat || "Other")}</td></tr>`;
+      groups[cat].forEach((it) => {
+        const set = new Set(it.dates || []);
+        body += `<tr><td class="hist-name" title="${escapeHtml(it.name)}">${escapeHtml(it.name)}</td>`;
+        days.forEach((d) => {
+          const key = isoDate(d);
+          const isToday = key === todayKey;
+          body += `<td class="hist-cell${isToday ? " today" : ""}" data-id="${it.id}" data-key="${key}"><span class="cell${set.has(key) ? " done" : ""}"></span></td>`;
+        });
+        body += `</tr>`;
+      });
+    });
+  body += `</tbody>`;
+
+  const table = document.createElement("table");
+  table.className = "hist-table";
+  table.innerHTML = head + body;
+  wrap.appendChild(table);
+
+  table.querySelectorAll(".hist-cell").forEach((td) => {
+    td.addEventListener("click", () => {
+      const it = tracker.items.find((x) => x.id === td.dataset.id);
+      if (!it) return;
+      toggleChoreDate(it, td.dataset.key);
+      td.querySelector(".cell").classList.toggle("done");
+    });
+  });
+}
+
 
 $("#addNoteForm").addEventListener("submit", (e) => {
   e.preventDefault();
@@ -1336,6 +1701,7 @@ async function init() {
   } catch {
     /* server not reachable yet — ignore */
   }
+  maybeSeedChores(); // one-time: load the House Chores list if the tracker is empty
   runSearch(); // friendly starter results
 }
 init();
