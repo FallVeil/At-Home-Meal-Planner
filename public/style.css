@@ -4,6 +4,7 @@
   --ink: #eaece7;
   --muted: #a1a69d;
   --line: #3d3f36;
+  --line-faint: #272821;
   --accent: #a6c199;
   --accent-dark: #90ac82;
   --green: #4f8c62;
@@ -631,7 +632,7 @@ button { font-family: inherit; }
 .note-editor textarea::placeholder { color: var(--muted); }
 
 /* Chores & habits */
-.chip-row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
+.chip-row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
 .chip-row .chip { width: auto; padding: 7px 14px; }
 .chore-group { margin-bottom: 18px; }
 .chore-cat {
@@ -656,26 +657,45 @@ button { font-family: inherit; }
   font-size: 0.75rem;
 }
 .chore-group.collapsed .chore-items { display: none; }
-#addChoreCat { flex: 0 1 150px; }
 
 /* Chore history grid */
 .history-wrap { overflow-x: auto; padding-bottom: 6px; }
-.hist-table { border-collapse: collapse; }
+.hist-table { border-collapse: collapse; width: 100%; table-layout: fixed; }
 .hist-table th, .hist-table td { padding: 3px; text-align: center; }
+.hist-name-h { width: 128px; }
+.hist-table.month .hist-name-h { width: 76px; }
+.hist-table.month th, .hist-table.month td { padding: 2px 1px; }
 .hist-name, .hist-name-h { position: sticky; left: 0; background: var(--bg); z-index: 1; }
 .hist-name {
   text-align: left;
-  padding: 6px 12px 6px 2px;
+  padding: 6px 10px 6px 2px;
   white-space: nowrap;
-  max-width: 150px;
   overflow: hidden;
   text-overflow: ellipsis;
   font-size: 0.85rem;
 }
+.hist-table.month .hist-name { font-size: 0.7rem; padding: 3px 5px 3px 2px; }
 .hist-day { color: var(--muted); font-size: 0.66rem; padding: 2px 3px 8px; font-weight: 400; }
 .hist-day .wd { display: block; }
 .hist-day .dn { display: block; color: var(--ink); font-size: 0.72rem; }
 .hist-day.today .dn { color: var(--accent); font-weight: 600; }
+.hist-week {
+  color: var(--muted);
+  font-size: 0.62rem;
+  font-weight: 400;
+  padding: 2px 1px 3px;
+  text-align: center;
+  border-left: 1px solid var(--line);
+}
+.hist-dnum {
+  color: var(--muted);
+  font-size: 0.5rem;
+  font-weight: 400;
+  padding: 0 0 4px;
+  text-align: center;
+}
+.hist-dnum.today { color: var(--accent); font-weight: 600; }
+.hist-dnum.week-start { border-left: 1px solid var(--line); }
 .hist-room td {
   text-align: left;
   color: var(--accent);
@@ -685,20 +705,41 @@ button { font-family: inherit; }
   font-weight: 600;
   padding: 12px 2px 4px;
 }
-.hist-cell { cursor: pointer; }
+.hist-cell { cursor: pointer; -webkit-user-select: none; user-select: none; }
+.hist-cell.week-start { border-left: 1px solid var(--line); }
 .hist-cell .cell {
-  display: inline-block;
-  width: 18px;
-  height: 18px;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  box-sizing: border-box;
+  margin: 0 auto;
+  border: 1px solid var(--line-faint);
   border-radius: 5px;
-  border: 1px solid var(--line);
   background: transparent;
 }
-.hist-cell .cell.done { background: var(--accent); border-color: var(--accent); }
-.hist-cell.today .cell { border-color: var(--accent); }
+.hist-table.week .cell { max-width: 40px; }
+.hist-table.month .cell { max-width: 22px; border-radius: 3px; }
+.hist-cell.today .cell { border-color: var(--accent); } /* the "today" green outline stays */
+.hist-cell .cell.a { background: var(--green); }
+.hist-cell .cell.k { background: var(--rose); }
+.hist-cell .cell.both { background: linear-gradient(135deg, var(--green) 0 50%, var(--rose) 50% 100%); }
+.cellnum { font-size: 0.74rem; font-weight: 700; color: #1a1b16; line-height: 1; }
+/* In a halved cell, each person's tally sits inside their own triangle. */
+.cell.both .cellnum { position: absolute; font-size: 0.6rem; }
+.cell.both .cellnum.a { top: 1px; left: 3px; }
+.cell.both .cellnum.k { right: 3px; bottom: 1px; }
+.hist-table.month .cellnum { display: none; }
+.hist-table.readonly .hist-cell { cursor: default; }
+/* Filled squares used beside chore names on the checklist (green = Andrew, rose = Katie). */
+.pip { width: 6px; height: 6px; border-radius: 2px; background: var(--accent); }
+.pip.a { background: var(--green); }
+.pip.k { background: var(--rose); }
+.pipn { font-size: 0.6rem; line-height: 1; color: var(--muted); margin-left: 1px; }
 .add-chore { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 18px; }
 .add-chore input {
-  flex: 1 1 170px;
   min-width: 0;
   padding: 11px 13px;
   border: 1px solid var(--line);
@@ -709,50 +750,72 @@ button { font-family: inherit; }
 }
 .add-chore input::placeholder { color: var(--muted); }
 .add-chore input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
-.add-chore select {
-  padding: 11px 10px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: var(--card);
-  color: var(--ink);
-  font-size: 16px;
-  cursor: pointer;
+#addChoreCat { flex: 0 1 150px; }
+/* Chore name field: input with a small enter-icon submit button on its end. */
+.chore-name-field { flex: 1 1 200px; display: flex; align-items: stretch; min-width: 0; }
+.chore-name-field input {
+  flex: 1;
+  border-radius: 10px 0 0 10px;
+  border-right: none;
 }
-.add-chore button {
+.chore-name-field button {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 46px;
+  padding: 0 14px;
+  border: none;
+  border-radius: 0 10px 10px 0;
   background: var(--green);
   color: #fff;
-  border: none;
-  padding: 11px 20px;
-  border-radius: 10px;
-  font-weight: 600;
   cursor: pointer;
 }
-.add-chore button:hover { background: var(--green-dark); }
+.chore-name-field button:hover { background: var(--green-dark); }
+.chore-name-field button:active { transform: scale(0.97); }
 .chore-item {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 12px 14px;
+  gap: 10px;
+  padding: 8px 12px;
   background: var(--card);
   border: 1px solid var(--line);
-  border-radius: 12px;
-  margin-bottom: 10px;
+  border-radius: 10px;
+  margin-bottom: 6px;
   box-shadow: var(--shadow);
   transition: opacity 0.2s ease;
 }
-.chore-item input[type="checkbox"] { width: 20px; height: 20px; accent-color: var(--green); flex: none; cursor: pointer; }
-.chore-item.done { opacity: 0.55; }
-.chore-item.done .chore-name { text-decoration: line-through; color: var(--muted); }
-.chore-name { flex: 1; min-width: 0; cursor: default; }
-.chore-tags { display: flex; align-items: center; gap: 6px; flex: none; }
-.assignee-pill {
-  font-size: 0.72rem;
-  padding: 2px 9px;
-  border-radius: 999px;
-  border: 1px solid var(--line);
+.chore-people { display: flex; gap: 6px; flex: none; }
+.pbtn {
+  position: relative;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  border: 1.5px solid var(--line);
+  background: transparent;
   color: var(--muted);
-  white-space: nowrap;
+  font-weight: 700;
+  font-size: 0.82rem;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+  -webkit-user-select: none;
+  user-select: none;
+  touch-action: manipulation;
 }
+/* The A/K buttons are just the log control — the coloured boxes carry the "done"
+   state — so the letter is tinted per person but the button no longer fills. */
+.pbtn.a { color: var(--green); }
+.pbtn.k { color: var(--rose); }
+.pbtn:hover { border-color: currentColor; }
+.pbtn:active { transform: scale(0.92); }
+.chore-name { flex: 0 1 auto; min-width: 0; cursor: default; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chore-marks { flex: 1 1 auto; display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.chore-marks .pip { width: 14px; height: 14px; border-radius: 3px; cursor: pointer; transition: opacity 0.15s ease; }
+.chore-marks .pip:hover { opacity: 0.55; }
+.chore-tags { display: flex; align-items: center; gap: 6px; flex: none; }
 .streak-pill {
   display: inline-flex;
   align-items: center;
@@ -766,15 +829,29 @@ button { font-family: inherit; }
   white-space: nowrap;
 }
 .chore-del {
+  display: none; /* revealed only in Edit mode */
   background: transparent;
   border: none;
-  color: var(--muted);
+  color: var(--danger);
   cursor: pointer;
   font-size: 0.95rem;
   padding: 2px 6px;
   flex: none;
 }
-.chore-del:hover { color: var(--danger); }
+#choreChecklist.editing .chore-del { display: inline-flex; }
+.chore-del:hover { color: var(--danger); opacity: 0.75; }
+
+/* Quiet text button (the checklist "Edit" toggle). */
+.linkish {
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 0.85rem;
+  padding: 4px 6px;
+}
+.linkish:hover,
+.linkish.on { color: var(--accent); }
 
 /* Refinements: motion + hover interactions */
 .tab, .chip, .ghost, .nav-arrow, .search-bar button, .add-item button,
@@ -817,8 +894,8 @@ button { font-family: inherit; }
   display: flex;
   align-items: baseline;
   gap: 10px;
-  padding: 7px 4px;
-  border-bottom: 1px dashed var(--line);
+  padding: 6px 4px;
+  border-bottom: 1px dashed var(--line-faint);
 }
 .grocery-item input { width: 18px; height: 18px; accent-color: var(--green); flex: none; align-self: center; }
 .grocery-item.checked label { text-decoration: line-through; color: var(--muted); }
@@ -882,10 +959,11 @@ button { font-family: inherit; }
 /* ---- Phone-first tweaks ---- */
 @media (max-width: 640px) {
   body { -webkit-text-size-adjust: 100%; }
-  .topbar { padding: 12px 14px 0; }
-  .topbar h1 { font-size: 1.15rem; }
-  .tab { padding: 9px 12px; font-size: 0.9rem; }
-  main { padding: 16px 14px 90px; }
+  .topbar { padding: 9px 14px 0; }
+  .topbar h1 { font-size: 1.05rem; margin-bottom: 8px; }
+  .header-art { top: 8px; height: clamp(26px, 8vw, 40px); }
+  .tab { padding: 8px 12px; font-size: 0.9rem; }
+  main { padding: 14px 14px 90px; }
 
   /* Category sidebar becomes a slim left rail on phones. */
   .search-layout { gap: 10px; }
@@ -900,7 +978,7 @@ button { font-family: inherit; }
   .search-bar input[type="search"], .search-bar select { font-size: 16px; }
 
   /* Big, thumb-friendly grocery rows; move "used in" onto its own line. */
-  .grocery-item { flex-wrap: wrap; padding: 11px 4px; }
+  .grocery-item { flex-wrap: wrap; padding: 9px 4px; }
   .grocery-item .used { margin-left: 28px; flex-basis: 100%; }
   .primary.big { width: 100%; }
   .modal { padding: 0; }

@@ -144,7 +144,7 @@ async function refreshFromServer() {
       updateNotesCount();
     }
     if (tr.enabled && tr.tracker && Array.isArray(tr.tracker.items)) {
-      tracker = { items: tr.tracker.items };
+      tracker = { items: normalizeChores(tr.tracker.items) };
       localStorage.setItem(TRACKER_KEY, JSON.stringify(tracker));
     }
     if ($("#tab-plan").classList.contains("active")) renderPlanner();
@@ -209,7 +209,7 @@ async function initSync() {
     if (tr.enabled) {
       const st = tr.tracker;
       if (st && Array.isArray(st.items) && st.items.length) {
-        tracker = { items: st.items };
+        tracker = { items: normalizeChores(st.items) };
         localStorage.setItem(TRACKER_KEY, JSON.stringify(tracker));
       } else if (tracker.items.length) {
         scheduleTrackerPush();
@@ -784,40 +784,32 @@ function populateGrocerySelect() {
 // Move unchecked self-added items from already-passed weeks into the current/
 // upcoming list, so anything you didn't buy follows you forward. Checked-off
 // (crossed-out) items stay behind as completed.
-function carryForwardExtras(weekKey) {
+// Unbought manual items keep showing on every later list until you check them off.
+// Non-destructive: items stay in the week they were added; we just surface the still-
+// unchecked ones (from any earlier week) on the week you're viewing, tagged "carried
+// over". Nothing is moved, so opening a future week can never strand an item.
+// Returns [{ extra, origin }] where `origin` is the week the item actually lives in.
+function carriedExtrasFor(weekKey) {
   const thisWeek = weekKeyOf(new Date());
-  if (weekKey < thisWeek) return; // never carry into a past week
-  let moved = false;
-  Object.keys(grocery).forEach((k) => {
-    if (k >= thisWeek) return; // only pull from weeks that have already passed
-    const src = grocery[k];
-    if (!src) return;
-    const staying = [];
-    (src.extras || []).forEach((extra) => {
-      if (extra.checked) staying.push(extra);
-      else {
-        extra.carried = true; // mark as rolled over from a previous week
-        weekGrocery(weekKey).extras.push(extra);
-        moved = true;
-      }
+  if (weekKey < thisWeek) return []; // don't clutter past weeks with future todos
+  const out = [];
+  const seen = new Set((weekGrocery(weekKey).extras || []).map((e) => e.id));
+  Object.keys(grocery)
+    .sort()
+    .forEach((k) => {
+      if (k >= weekKey) return; // only pull forward from earlier weeks
+      (grocery[k].extras || []).forEach((extra) => {
+        if (extra.checked || seen.has(extra.id)) return; // bought, or already shown here
+        seen.add(extra.id);
+        out.push({ extra, origin: k });
+      });
     });
-    src.extras = staying;
-    // Tidy up weeks left with nothing.
-    if (
-      !src.extras.length &&
-      !Object.keys(src.checked || {}).length &&
-      !Object.keys(src.overrides || {}).length
-    ) {
-      delete grocery[k];
-    }
-  });
-  if (moved) saveGrocery();
+  return out;
 }
 
 // Load + render the grocery list for a specific week (works even with no dishes).
 async function loadGroceryWeek(weekKey) {
   groceryWeek = weekKey;
-  carryForwardExtras(weekKey);
   groceryEmpty.classList.add("hidden");
   const sel = $("#grocerySelect");
   if (sel && sel.value !== weekKey) sel.value = weekKey;
@@ -880,9 +872,14 @@ function renderGrocery(recipes, weekKey) {
     const aisle = wk.overrides[item.key] || item.aisle;
     (byAisle[aisle] ||= { extras: [], items: [] }).items.push(item);
   }
-  wk.extras.forEach((extra) => {
-    const aisle = extra.aisle || categorizeItem(extra.name);
-    (byAisle[aisle] ||= { extras: [], items: [] }).extras.push(extra);
+  // This week's own manual items, plus still-unbought items carried from earlier weeks.
+  const extrasToShow = [
+    ...wk.extras.map((extra) => ({ extra, origin: weekKey, carried: Boolean(extra.carried) })),
+    ...carriedExtrasFor(weekKey).map(({ extra, origin }) => ({ extra, origin, carried: true })),
+  ];
+  extrasToShow.forEach((row) => {
+    const aisle = row.extra.aisle || categorizeItem(row.extra.name);
+    (byAisle[aisle] ||= { extras: [], items: [] }).extras.push(row);
   });
 
   Object.keys(byAisle)
@@ -892,7 +889,7 @@ function renderGrocery(recipes, weekKey) {
       const section = document.createElement("div");
       section.className = "aisle";
       section.innerHTML = `<h3>${escapeHtml(aisle)}</h3>`;
-      group.extras.forEach((extra) => section.appendChild(extraRow(extra, weekKey)));
+      group.extras.forEach((row) => section.appendChild(extraRow(row.extra, row.origin, row.carried)));
       group.items
         .sort((a, b) => a.name.localeCompare(b.name))
         .forEach((item) => section.appendChild(groceryRow(item, weekKey)));
@@ -966,15 +963,16 @@ function groceryRow(item, weekKey) {
   return row;
 }
 
-function extraRow(extra, weekKey) {
-  const wk = weekGrocery(weekKey);
+// `originWeek` is the week the item actually lives in (its own week, or the earlier
+// week it carried from). `carried` controls the badge; edits always hit the origin.
+function extraRow(extra, originWeek, carried) {
   const row = document.createElement("div");
   row.className = "grocery-item" + (extra.checked ? " checked" : "");
   const id = "ex-" + extra.id;
   row.innerHTML = `
     <input type="checkbox" id="${id}" ${extra.checked ? "checked" : ""} />
     <label for="${id}">${escapeHtml(capitalize(extra.name))}</label>
-    <span class="added-badge${extra.carried ? " carried" : ""}">${extra.carried ? "carried over" : "added"}</span>`;
+    <span class="added-badge${carried ? " carried" : ""}">${carried ? "carried over" : "added"}</span>`;
   row.querySelector("input").addEventListener("change", (e) => {
     extra.checked = e.target.checked;
     row.classList.toggle("checked", e.target.checked);
@@ -987,7 +985,7 @@ function extraRow(extra, weekKey) {
     moveControl(extra.aisle || categorizeItem(extra.name), (a) => {
       extra.aisle = a;
       saveGrocery();
-      renderGrocery(lastGroceryRecipes, weekKey);
+      renderGrocery(lastGroceryRecipes, groceryWeek);
     })
   );
   const remove = document.createElement("button");
@@ -995,9 +993,10 @@ function extraRow(extra, weekKey) {
   remove.setAttribute("aria-label", "Remove item");
   remove.textContent = "✕";
   remove.addEventListener("click", () => {
-    wk.extras = wk.extras.filter((x) => x.id !== extra.id);
+    const src = weekGrocery(originWeek);
+    src.extras = src.extras.filter((x) => x.id !== extra.id);
     saveGrocery();
-    renderGrocery(lastGroceryRecipes, weekKey);
+    renderGrocery(lastGroceryRecipes, groceryWeek);
   });
   actions.appendChild(remove);
   row.appendChild(actions);
@@ -1164,12 +1163,12 @@ document.addEventListener("keydown", (e) => {
 const TRACKER_KEY = "mealPlanner.tracker.v1";
 const PEOPLE = ["Andrew", "Katie"];
 const CHORE_CAT_ORDER = ["General", "Living room", "Kitchen", "Bedroom", "Bathroom", "Outside"];
-let tracker = loadTracker(); // { items: [{id,name,person,category,dates:[]}] }
+let tracker = loadTracker(); // { items: [{id,name,category,done:{"0":[],"1":[]}}] }
 let trackerPushTimer = null;
-let choreFilter = "all"; // "all" | 0 | 1
 let choreViewMode = "list"; // "list" | "history"
 let historyRange = "week"; // "week" | "month"
 const choreCollapsed = new Set(); // collapsed category names in the checklist
+let choreCollapseSeeded = false; // rooms start collapsed on first render for easy scanning
 
 // Your chores from House Chores.xlsx, grouped by room (seeded once).
 function buildDefaultChores() {
@@ -1184,7 +1183,7 @@ function buildDefaultChores() {
   let n = 0;
   const items = [];
   data.forEach(([category, names]) =>
-    names.forEach((name) => items.push({ id: "seed-" + n++, name, person: null, category, dates: [] }))
+    names.forEach((name) => items.push({ id: "seed-" + n++, name, category, done: { "0": {}, "1": {} } }))
   );
   return items;
 }
@@ -1199,11 +1198,36 @@ function maybeSeedChores() {
 function loadTracker() {
   try {
     const t = JSON.parse(localStorage.getItem(TRACKER_KEY));
-    if (t && typeof t === "object" && Array.isArray(t.items)) return { items: t.items };
+    if (t && typeof t === "object" && Array.isArray(t.items)) return { items: normalizeChores(t.items) };
   } catch {
     /* ignore */
   }
   return { items: [] };
+}
+// Per-person completion COUNTS: done = { "0": { "2026-07-30": 2 }, "1": {…} }.
+// A chore can be logged multiple times a day, so each date maps to a tally.
+function normalizeChores(items) {
+  items.forEach((item) => {
+    let done = item.done;
+    if (!done || typeof done !== "object" || Array.isArray(done)) done = { "0": {}, "1": {} };
+    ["0", "1"].forEach((p) => {
+      const v = done[p];
+      if (Array.isArray(v)) {
+        // old model: a list of dates → one tally each
+        const obj = {};
+        v.forEach((d) => (obj[d] = (obj[d] || 0) + 1));
+        done[p] = obj;
+      } else if (!v || typeof v !== "object") {
+        done[p] = {};
+      }
+    });
+    // very old single `dates` array → attribute past checks to Andrew
+    if (Array.isArray(item.dates)) item.dates.forEach((d) => (done["0"][d] = (done["0"][d] || 0) + 1));
+    item.done = done;
+    delete item.dates;
+    delete item.person;
+  });
+  return items;
 }
 function saveTracker() {
   localStorage.setItem(TRACKER_KEY, JSON.stringify(tracker));
@@ -1221,9 +1245,20 @@ function scheduleTrackerPush() {
   }, 700);
 }
 
-const choreDoneToday = (item) => (item.dates || []).includes(isoDate(new Date()));
+function personCount(item, p, key) {
+  return (item.done && item.done[p] && item.done[p][key]) || 0;
+}
+function dayCount(item, key) {
+  return personCount(item, "0", key) + personCount(item, "1", key);
+}
+// Union of the days either person logged this chore (for streaks / done-today).
+function doneUnion(item) {
+  const d = item.done || {};
+  return new Set([...Object.keys(d["0"] || {}), ...Object.keys(d["1"] || {})]);
+}
+const choreDoneToday = (item) => dayCount(item, isoDate(new Date())) > 0;
 function choreStreak(item) {
-  const set = new Set(item.dates || []);
+  const set = doneUnion(item);
   const d = new Date();
   if (!set.has(isoDate(d))) d.setDate(d.getDate() - 1); // not done today: streak runs through yesterday
   let s = 0;
@@ -1233,31 +1268,84 @@ function choreStreak(item) {
   }
   return s;
 }
-function toggleChoreDate(item, key) {
-  const set = new Set(item.dates || []);
-  set.has(key) ? set.delete(key) : set.add(key);
-  item.dates = [...set].sort();
+function incPersonDate(item, p, key) {
+  if (!item.done) item.done = { "0": {}, "1": {} };
+  if (!item.done[p]) item.done[p] = {};
+  item.done[p][key] = (item.done[p][key] || 0) + 1;
   saveTracker();
 }
-function toggleChore(item) {
-  toggleChoreDate(item, isoDate(new Date()));
+function decPersonDate(item, p, key) {
+  if (!item.done || !item.done[p]) return;
+  const n = (item.done[p][key] || 0) - 1;
+  if (n > 0) item.done[p][key] = n;
+  else delete item.done[p][key];
+  saveTracker();
+}
+// Tap = increment; press-and-hold or right-click = decrement (one action per gesture,
+// works with mouse and touch). Used for the A/K buttons and the history cells.
+function bindCount(el, onInc, onDec) {
+  let timer = null;
+  let held = false;
+  let primary = false;
+  let suppress = false;
+  const clearHold = () => {
+    if (timer) {
+      clearTimeout(timer);
+      timer = null;
+    }
+  };
+  el.addEventListener("pointerdown", (e) => {
+    held = false;
+    suppress = false;
+    primary = !(e.pointerType === "mouse" && e.button !== 0);
+    if (primary)
+      timer = setTimeout(() => {
+        held = true;
+        onDec();
+      }, 450);
+  });
+  el.addEventListener("pointerup", () => {
+    clearHold();
+    if (primary && !held && !suppress) onInc();
+    primary = false;
+  });
+  el.addEventListener("pointerleave", clearHold);
+  el.addEventListener("pointercancel", () => {
+    clearHold();
+    primary = false;
+  });
+  el.addEventListener("contextmenu", (e) => {
+    e.preventDefault();
+    clearHold();
+    if (!held) {
+      suppress = true;
+      onDec();
+    }
+  });
+}
+// Filled squares — one per completion, green for Andrew (a) and rose for Katie (k).
+function pipBoxes(a, k) {
+  const total = a + k;
+  if (total <= 0) return "";
+  const max = 8;
+  let pips = "";
+  let shown = 0;
+  for (let i = 0; i < a && shown < max; i++, shown++) pips += '<i class="pip a"></i>';
+  for (let i = 0; i < k && shown < max; i++, shown++) pips += '<i class="pip k"></i>';
+  return total > max ? `${pips}<span class="pipn">${total}</span>` : pips;
 }
 function flameIcon() {
   return `<svg viewBox="0 0 24 24" width="11" height="11" aria-hidden="true"><path fill="currentColor" d="M12 23a7 7 0 0 1-7-7c0-2.2 1.1-4.1 2.6-6C9 8 10 6 10 3.2c3 2 4.4 4 5 6.2C15.6 11.6 19 13.5 19 16a7 7 0 0 1-7 7z"/></svg>`;
 }
 
 function renderChores() {
-  renderChoreFilter();
-  renderChoreAssigneeOptions();
   renderChoreCatOptions();
 
   const list = $("#choreList");
   list.innerHTML = "";
-  const items = tracker.items.filter((it) => choreFilter === "all" || it.person === choreFilter);
+  const items = tracker.items;
   if (!items.length) {
-    $("#choreEmpty").textContent = tracker.items.length
-      ? "Nothing assigned here."
-      : "No items yet. Add a daily chore or habit to start tracking.";
+    $("#choreEmpty").textContent = "No items yet. Add a daily chore or habit to start tracking.";
     $("#choreEmpty").classList.remove("hidden");
     return;
   }
@@ -1268,6 +1356,10 @@ function renderChores() {
     const c = (it.category || "").trim();
     (groups[c] ||= []).push(it);
   });
+  if (!choreCollapseSeeded) {
+    Object.keys(groups).forEach((cat) => choreCollapsed.add(cat)); // start every room collapsed
+    choreCollapseSeeded = true;
+  }
   Object.keys(groups)
     .sort(choreCatSort)
     .forEach((cat) => {
@@ -1307,66 +1399,66 @@ function renderChoreCatOptions() {
   dl.innerHTML = cats.map((c) => `<option value="${escapeHtml(c)}"></option>`).join("");
 }
 
-function renderChoreFilter() {
-  const el = $("#choreFilter");
-  el.innerHTML = "";
-  const opts = [
-    { v: "all", label: "All" },
-    { v: 0, label: PEOPLE[0] },
-    { v: 1, label: PEOPLE[1] },
-  ];
-  opts.forEach((o) => {
-    const b = document.createElement("button");
-    b.type = "button";
-    b.className = "chip" + (String(choreFilter) === String(o.v) ? " active" : "");
-    b.textContent = o.label;
-    b.addEventListener("click", () => {
-      choreFilter = o.v;
-      renderActiveChoreView();
-    });
-    el.appendChild(b);
-  });
-}
-
 function renderActiveChoreView() {
+  const isList = choreViewMode === "list";
+  $("#choreEdit").classList.toggle("hidden", !isList); // "Edit" only applies to the checklist
+  if (!isList) {
+    $("#choreChecklist").classList.remove("editing");
+    $("#choreEdit").classList.remove("on");
+    $("#choreEdit").textContent = "Edit";
+  }
   if (choreViewMode === "history") renderHistory();
   else renderChores();
 }
 
-function renderChoreAssigneeOptions() {
-  const sel = $("#addChorePerson");
-  const prev = sel.value;
-  sel.innerHTML = "";
-  const add = (v, label) => {
-    const o = document.createElement("option");
-    o.value = v;
-    o.textContent = label;
-    sel.appendChild(o);
-  };
-  add("", "Anyone");
-  add("0", PEOPLE[0]);
-  add("1", PEOPLE[1]);
-  if ([...sel.options].some((o) => o.value === prev)) sel.value = prev;
-}
+$("#choreEdit").addEventListener("click", () => {
+  const editing = $("#choreChecklist").classList.toggle("editing");
+  $("#choreEdit").classList.toggle("on", editing);
+  $("#choreEdit").textContent = editing ? "Done" : "Edit";
+});
 
 function choreRow(item) {
   const row = document.createElement("div");
   const done = choreDoneToday(item);
   row.className = "chore-item" + (done ? " done" : "");
-  const id = "ch-" + item.id;
+  const today = isoDate(new Date());
   const streak = choreStreak(item);
-  const personName = item.person === 0 || item.person === 1 ? PEOPLE[item.person] : "";
+  const aN = personCount(item, "0", today);
+  const kN = personCount(item, "1", today);
+  const pbtn = (p, letter, name, n) =>
+    `<button type="button" class="pbtn ${letter.toLowerCase()}${n > 0 ? " on" : ""}" data-p="${p}" aria-label="${escapeHtml(name)} did this${n > 1 ? " (" + n + "×)" : ""}" title="${escapeHtml(name)} — tap to add, hold to remove">${letter}</button>`;
   row.innerHTML = `
-    <input type="checkbox" id="${id}" ${done ? "checked" : ""} />
-    <label class="chore-name" for="${id}">${escapeHtml(item.name)}</label>
+    <div class="chore-people">
+      ${pbtn("0", "A", PEOPLE[0], aN)}
+      ${pbtn("1", "K", PEOPLE[1], kN)}
+    </div>
+    <span class="chore-name">${escapeHtml(item.name)}</span>
+    <span class="chore-marks">${pipBoxes(aN, kN)}</span>
     <span class="chore-tags">
-      ${streak > 0 ? `<span class="streak-pill" title="${streak}-day streak">${flameIcon()} ${streak}</span>` : ""}
-      ${personName ? `<span class="assignee-pill">${escapeHtml(personName)}</span>` : ""}
+      ${streak >= 3 ? `<span class="streak-pill" title="${streak}-day streak">${flameIcon()} ${streak}</span>` : ""}
     </span>
     <button class="chore-del" aria-label="Delete">✕</button>`;
-  row.querySelector("input").addEventListener("change", () => {
-    toggleChore(item);
-    renderChores();
+  row.querySelectorAll(".pbtn").forEach((btn) => {
+    const p = btn.dataset.p;
+    bindCount(
+      btn,
+      () => {
+        incPersonDate(item, p, today);
+        renderChores();
+      },
+      () => {
+        decPersonDate(item, p, today);
+        renderChores();
+      }
+    );
+  });
+  // Click a filled box to remove that completion (green = Andrew, rose = Katie).
+  row.querySelectorAll(".chore-marks .pip").forEach((pip) => {
+    pip.title = "Remove one completion";
+    pip.addEventListener("click", () => {
+      decPersonDate(item, pip.classList.contains("a") ? "0" : "1", today);
+      renderChores();
+    });
   });
   row.querySelector(".chore-del").addEventListener("click", () => {
     tracker.items = tracker.items.filter((x) => x.id !== item.id);
@@ -1381,13 +1473,11 @@ $("#addChoreForm").addEventListener("submit", (e) => {
   const input = $("#addChoreInput");
   const name = input.value.trim();
   if (!name) return;
-  const pv = $("#addChorePerson").value;
   tracker.items.push({
     id: Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
     name,
-    person: pv === "" ? null : Number(pv),
     category: $("#addChoreCat").value.trim(),
-    dates: [],
+    done: { "0": {}, "1": {} },
   });
   saveTracker();
   input.value = ""; // keep the category so you can add several to the same room
@@ -1413,27 +1503,41 @@ document.querySelectorAll("#historyRange .chip").forEach((btn) => {
 });
 
 function historyDays() {
-  const now = new Date();
+  // Week = this Monday–Sunday. Month = this week + the 3 weeks before it (28 days,
+  // rolling, ignoring calendar month boundaries).
+  const weeks = historyRange === "month" ? 4 : 1;
+  const start = startOfWeek(new Date());
+  start.setDate(start.getDate() - 7 * (weeks - 1));
   const out = [];
-  if (historyRange === "month") {
-    const y = now.getFullYear();
-    const m = now.getMonth();
-    const last = new Date(y, m + 1, 0).getDate();
-    for (let d = 1; d <= last; d++) out.push(new Date(y, m, d));
-  } else {
-    const start = startOfWeek(now);
-    for (let i = 0; i < 7; i++) {
-      out.push(new Date(start.getFullYear(), start.getMonth(), start.getDate() + i));
-    }
+  for (let i = 0; i < 7 * weeks; i++) {
+    out.push(new Date(start.getFullYear(), start.getMonth(), start.getDate() + i));
   }
   return out;
 }
 
+const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+// Fill style for a cell: solid green (Andrew), solid rose (Katie), or diagonally
+// halved when both did it. `showCount` adds each person's own tally (in their half)
+// when they did it more than once.
+function cellMarkup(aC, kC, showCount) {
+  let cls = "";
+  if (aC > 0 && kC > 0) cls = "both";
+  else if (aC > 0) cls = "a";
+  else if (kC > 0) cls = "k";
+  let num = "";
+  if (showCount) {
+    if (aC > 1) num += `<span class="cellnum a">${aC}</span>`;
+    if (kC > 1) num += `<span class="cellnum k">${kC}</span>`;
+  }
+  return { cls, num };
+}
+
+
 function renderHistory() {
-  renderChoreFilter();
   const wrap = $("#historyGrid");
   wrap.innerHTML = "";
-  const items = tracker.items.filter((it) => choreFilter === "all" || it.person === choreFilter);
+  const items = tracker.items;
   if (!items.length) {
     wrap.innerHTML = `<div class="empty">No chores to show yet.</div>`;
     return;
@@ -1441,19 +1545,40 @@ function renderHistory() {
   const days = historyDays();
   const todayKey = isoDate(new Date());
   const WD = ["M", "T", "W", "T", "F", "S", "S"];
+  const isMonth = historyRange === "month";
+  const showCount = !isMonth; // month view ignores multiple completions
 
+  // History is a read-only overview tallying both people (green = Andrew, rose = Katie).
+  // Logging happens on the checklist; the person filter chips were removed.
   const groups = {};
   items.forEach((it) => {
     const c = (it.category || "").trim();
     (groups[c] ||= []).push(it);
   });
 
-  let head = `<thead><tr><th class="hist-name-h"></th>`;
-  days.forEach((d) => {
-    const isToday = isoDate(d) === todayKey;
-    head += `<th class="hist-day${isToday ? " today" : ""}"><span class="wd">${WD[(d.getDay() + 6) % 7]}</span><span class="dn">${d.getDate()}</span></th>`;
-  });
-  head += `</tr></thead>`;
+  let head = "<thead>";
+  if (isMonth) {
+    // Row 1: one label per week (its Monday). Row 2: each column's day-of-month.
+    head += `<tr><th class="hist-name-h" rowspan="2"></th>`;
+    for (let w = 0; w < days.length / 7; w++) {
+      const mon = days[w * 7];
+      head += `<th class="hist-week" colspan="7">${MON[mon.getMonth()]} ${mon.getDate()}</th>`;
+    }
+    head += `</tr><tr>`;
+    days.forEach((d, i) => {
+      const isToday = isoDate(d) === todayKey;
+      head += `<th class="hist-dnum${isToday ? " today" : ""}${i % 7 === 0 ? " week-start" : ""}">${d.getDate()}</th>`;
+    });
+    head += `</tr>`;
+  } else {
+    head += `<tr><th class="hist-name-h"></th>`;
+    days.forEach((d) => {
+      const isToday = isoDate(d) === todayKey;
+      head += `<th class="hist-day${isToday ? " today" : ""}"><span class="wd">${WD[(d.getDay() + 6) % 7]}</span><span class="dn">${d.getDate()}</span></th>`;
+    });
+    head += `</tr>`;
+  }
+  head += "</thead>";
 
   let body = `<tbody>`;
   Object.keys(groups)
@@ -1461,12 +1586,13 @@ function renderHistory() {
     .forEach((cat) => {
       body += `<tr class="hist-room"><td colspan="${days.length + 1}">${escapeHtml(cat || "Other")}</td></tr>`;
       groups[cat].forEach((it) => {
-        const set = new Set(it.dates || []);
         body += `<tr><td class="hist-name" title="${escapeHtml(it.name)}">${escapeHtml(it.name)}</td>`;
-        days.forEach((d) => {
+        days.forEach((d, i) => {
           const key = isoDate(d);
           const isToday = key === todayKey;
-          body += `<td class="hist-cell${isToday ? " today" : ""}" data-id="${it.id}" data-key="${key}"><span class="cell${set.has(key) ? " done" : ""}"></span></td>`;
+          const weekStart = isMonth && i % 7 === 0;
+          const { cls, num } = cellMarkup(personCount(it, "0", key), personCount(it, "1", key), showCount);
+          body += `<td class="hist-cell${isToday ? " today" : ""}${weekStart ? " week-start" : ""}"><span class="cell${cls ? " " + cls : ""}">${num}</span></td>`;
         });
         body += `</tr>`;
       });
@@ -1474,18 +1600,9 @@ function renderHistory() {
   body += `</tbody>`;
 
   const table = document.createElement("table");
-  table.className = "hist-table";
+  table.className = "hist-table " + historyRange + " readonly";
   table.innerHTML = head + body;
   wrap.appendChild(table);
-
-  table.querySelectorAll(".hist-cell").forEach((td) => {
-    td.addEventListener("click", () => {
-      const it = tracker.items.find((x) => x.id === td.dataset.id);
-      if (!it) return;
-      toggleChoreDate(it, td.dataset.key);
-      td.querySelector(".cell").classList.toggle("done");
-    });
-  });
 }
 
 

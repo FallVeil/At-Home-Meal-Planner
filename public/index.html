@@ -157,19 +157,25 @@
       <section id="tab-chores" class="panel">
         <div class="section-head">
           <h2>Chores &amp; habits</h2>
+          <button id="choreEdit" class="linkish" type="button">Edit</button>
         </div>
         <div class="chip-row" id="choreView">
           <button type="button" class="chip active" data-view="list">Checklist</button>
           <button type="button" class="chip" data-view="history">History</button>
         </div>
-        <div class="chip-row" id="choreFilter"></div>
         <div id="choreChecklist">
           <form id="addChoreForm" class="add-chore">
-            <input id="addChoreInput" type="text" placeholder="Add a chore or habit…" autocomplete="off" />
             <input id="addChoreCat" type="text" list="choreCatList" placeholder="Room / category" autocomplete="off" />
             <datalist id="choreCatList"></datalist>
-            <select id="addChorePerson" aria-label="Assign to"></select>
-            <button type="submit">Add</button>
+            <div class="chore-name-field">
+              <input id="addChoreInput" type="text" placeholder="Add a chore or habit…" autocomplete="off" />
+              <button type="submit" aria-label="Add chore">
+                <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <polyline points="9 10 4 15 9 20" />
+                  <path d="M20 4v7a4 4 0 0 1-4 4H4" />
+                </svg>
+              </button>
+            </div>
           </form>
           <div id="choreList"></div>
           <div id="choreEmpty" class="empty">
