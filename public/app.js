@@ -270,7 +270,34 @@ const groceryMeta = $("#groceryMeta");
 document.querySelectorAll(".tab").forEach((tab) => {
   tab.addEventListener("click", () => activateTab(tab.dataset.tab));
 });
-function activateTab(name) {
+
+// ------------------------------------------------------------
+//  Back-button / in-app history
+//  Phone Back/swipe would otherwise close the whole app. We keep the
+//  Planner as a "home" base entry and push a history entry whenever we
+//  leave it, so Back returns here first and only exits from home.
+//  (Planner is a placeholder until a real dashboard/home screen exists.)
+// ------------------------------------------------------------
+const HOME_TAB = "plan";
+let currentTab = HOME_TAB;
+
+function activateTab(name, fromHistory = false) {
+  if (!fromHistory) {
+    const atHome = !history.state || history.state.tab === HOME_TAB;
+    if (name === HOME_TAB) {
+      // Going home: step back to the base entry so Back stays in sync.
+      if (!atHome) {
+        history.back(); // popstate will render the home tab
+        return;
+      }
+      history.replaceState({ tab: HOME_TAB }, "");
+    } else if (atHome) {
+      history.pushState({ tab: name }, ""); // leaving home → Back returns here
+    } else {
+      history.replaceState({ tab: name }, ""); // hop between non-home tabs
+    }
+  }
+  currentTab = name;
   document
     .querySelectorAll(".tab")
     .forEach((t) => t.classList.toggle("active", t.dataset.tab === name));
@@ -300,6 +327,37 @@ function activateTab(name) {
     refreshFromServer();
   }
 }
+
+// Any open full-screen overlay (recipe detail / note editor). Back closes
+// these before it touches the tab navigation.
+function anyOverlayOpen() {
+  return (
+    !$("#modal").classList.contains("hidden") ||
+    !$("#noteEditor").classList.contains("hidden")
+  );
+}
+function closeOpenOverlays() {
+  if (!$("#modal").classList.contains("hidden")) closeModal();
+  if (!$("#noteEditor").classList.contains("hidden")) closeNoteEditor();
+}
+// Opening an overlay pushes a history entry (see showRecipe / openNoteEditor) so
+// Back closes it. Interactive closes unwind that entry; popstate does the rest.
+function pushOverlayState() {
+  history.pushState({ tab: currentTab, overlay: true }, "");
+}
+function dismissOverlays() {
+  if (history.state && history.state.overlay) history.back(); // popstate closes it
+  else closeOpenOverlays();
+}
+
+window.addEventListener("popstate", (e) => {
+  // A Back press should first dismiss an open overlay, staying in the app.
+  if (anyOverlayOpen()) {
+    closeOpenOverlays();
+    return;
+  }
+  activateTab((e.state && e.state.tab) || HOME_TAB, true);
+});
 
 // Pull the latest shared data when the app regains focus (e.g. you switch back
 // to it after your wife added something on her phone).
@@ -1207,6 +1265,7 @@ function openNoteEditor(note) {
   const ta = $("#noteEditorInput");
   ta.value = note.text;
   $("#noteEditor").classList.remove("hidden");
+  pushOverlayState(); // Back closes the editor rather than the app
   ta.focus();
   ta.setSelectionRange(ta.value.length, ta.value.length);
 }
@@ -1226,12 +1285,12 @@ function saveNoteEditor() {
     saveNotes();
     renderNotes();
   }
-  closeNoteEditor();
+  dismissOverlays();
 }
 $("#noteEditorSave").addEventListener("click", saveNoteEditor);
-$("#noteEditorCancel").addEventListener("click", closeNoteEditor);
+$("#noteEditorCancel").addEventListener("click", dismissOverlays);
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && !$("#noteEditor").classList.contains("hidden")) closeNoteEditor();
+  if (e.key === "Escape" && !$("#noteEditor").classList.contains("hidden")) dismissOverlays();
 });
 
 // ============================================================
@@ -1703,12 +1762,12 @@ $("#addNoteForm").addEventListener("submit", (e) => {
 // ============================================================
 const modal = $("#modal");
 const modalBody = $("#modalBody");
-$("#modalClose").addEventListener("click", closeModal);
+$("#modalClose").addEventListener("click", dismissOverlays);
 modal.addEventListener("click", (e) => {
-  if (e.target === modal) closeModal();
+  if (e.target === modal) dismissOverlays();
 });
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape") closeModal();
+  if (e.key === "Escape" && !modal.classList.contains("hidden")) dismissOverlays();
 });
 // Keep the screen awake while a recipe is open (for hands-free cooking).
 // Uses the Screen Wake Lock API where supported; silently no-ops otherwise.
@@ -1740,6 +1799,7 @@ function closeModal() {
 }
 async function showRecipe(id) {
   modal.classList.remove("hidden");
+  pushOverlayState(); // Back closes the recipe rather than the app
   requestWakeLock(); // keep the screen on while viewing/cooking
   modalBody.innerHTML = `<div class="loading"><div class="spinner"></div>Loading recipe…</div>`;
   try {
@@ -1882,6 +1942,7 @@ function placeholder() {
 //  Startup
 // ============================================================
 async function init() {
+  history.replaceState({ tab: HOME_TAB }, ""); // base "home" entry for the Back button
   updatePlanCount();
   updateFavCount();
   updateNotesCount();
