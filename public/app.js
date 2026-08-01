@@ -119,12 +119,14 @@ function scheduleFavPush() {
 async function refreshFromServer() {
   if (!syncEnabled) return;
   try {
-    const [pr, fr, gr, nr, tr] = await Promise.all([
+    const [pr, fr, gr, nr, tr, er, dr] = await Promise.all([
       fetch("/api/plan").then((r) => r.json()),
       fetch("/api/favorites").then((r) => r.json()),
       fetch("/api/grocery").then((r) => r.json()),
       fetch("/api/notes").then((r) => r.json()),
       fetch("/api/tracker").then((r) => r.json()),
+      fetch("/api/events").then((r) => r.json()),
+      fetch("/api/todos").then((r) => r.json()),
     ]);
     if (pr.enabled && pr.plan) {
       plan = pr.plan;
@@ -149,12 +151,21 @@ async function refreshFromServer() {
       tracker = { items: normalizeChores(tr.tracker.items) };
       localStorage.setItem(TRACKER_KEY, JSON.stringify(tracker));
     }
+    if (er.enabled && Array.isArray(er.events)) {
+      events = er.events;
+      localStorage.setItem(EVENTS_KEY, JSON.stringify(events));
+    }
+    if (dr.enabled && Array.isArray(dr.todos)) {
+      todos = dr.todos;
+      localStorage.setItem(TODOS_KEY, JSON.stringify(todos));
+    }
     if ($("#tab-plan").classList.contains("active")) renderPlanner();
     if (favViewActive()) renderFavorites();
     if ($("#tab-grocery").classList.contains("active") && groceryWeek) {
       renderGrocery(lastGroceryRecipes, groceryWeek);
     }
-    if ($("#tab-notes").classList.contains("active")) renderNotes();
+    if ($("#tab-notes").classList.contains("active")) renderNotesView();
+    if ($("#tab-calendar").classList.contains("active")) renderCalendar();
     if ($("#tab-chores").classList.contains("active")) renderActiveChoreView();
   } catch {
     /* offline/transient — keep local copy */
@@ -165,12 +176,14 @@ async function refreshFromServer() {
 async function initSync() {
   if (!syncEnabled) return;
   try {
-    const [pr, fr, gr, nr, tr] = await Promise.all([
+    const [pr, fr, gr, nr, tr, er, dr] = await Promise.all([
       fetch("/api/plan").then((r) => r.json()),
       fetch("/api/favorites").then((r) => r.json()),
       fetch("/api/grocery").then((r) => r.json()),
       fetch("/api/notes").then((r) => r.json()),
       fetch("/api/tracker").then((r) => r.json()),
+      fetch("/api/events").then((r) => r.json()),
+      fetch("/api/todos").then((r) => r.json()),
     ]);
     if (pr.enabled) {
       const serverPlan = pr.plan || {};
@@ -215,6 +228,24 @@ async function initSync() {
         localStorage.setItem(TRACKER_KEY, JSON.stringify(tracker));
       } else if (tracker.items.length) {
         scheduleTrackerPush();
+      }
+    }
+    if (er.enabled) {
+      const serverEvents = er.events || [];
+      if (serverEvents.length) {
+        events = serverEvents;
+        localStorage.setItem(EVENTS_KEY, JSON.stringify(events));
+      } else if (events.length) {
+        scheduleEventsPush();
+      }
+    }
+    if (dr.enabled) {
+      const serverTodos = dr.todos || [];
+      if (serverTodos.length) {
+        todos = serverTodos;
+        localStorage.setItem(TODOS_KEY, JSON.stringify(todos));
+      } else if (todos.length) {
+        scheduleTodosPush();
       }
     }
     updatePlanCount();
@@ -274,11 +305,10 @@ document.querySelectorAll(".tab").forEach((tab) => {
 // ------------------------------------------------------------
 //  Back-button / in-app history
 //  Phone Back/swipe would otherwise close the whole app. We keep the
-//  Planner as a "home" base entry and push a history entry whenever we
+//  Calendar as a "home" base entry and push a history entry whenever we
 //  leave it, so Back returns here first and only exits from home.
-//  (Planner is a placeholder until a real dashboard/home screen exists.)
 // ------------------------------------------------------------
-const HOME_TAB = "plan";
+const HOME_TAB = "calendar";
 let currentTab = HOME_TAB;
 
 function activateTab(name, fromHistory = false) {
@@ -318,8 +348,12 @@ function activateTab(name, fromHistory = false) {
     loadGroceryWeek(groceryWeek || weekKeyOf(new Date()));
     refreshFromServer();
   }
+  if (name === "calendar") {
+    renderCalendar();
+    refreshFromServer();
+  }
   if (name === "notes") {
-    renderNotes();
+    renderNotesView();
     refreshFromServer();
   }
   if (name === "chores") {
@@ -333,12 +367,16 @@ function activateTab(name, fromHistory = false) {
 function anyOverlayOpen() {
   return (
     !$("#modal").classList.contains("hidden") ||
-    !$("#noteEditor").classList.contains("hidden")
+    !$("#noteEditor").classList.contains("hidden") ||
+    !$("#dayEditor").classList.contains("hidden") ||
+    !$("#todoEditor").classList.contains("hidden")
   );
 }
 function closeOpenOverlays() {
   if (!$("#modal").classList.contains("hidden")) closeModal();
   if (!$("#noteEditor").classList.contains("hidden")) closeNoteEditor();
+  if (!$("#dayEditor").classList.contains("hidden")) closeDayEditor();
+  if (!$("#todoEditor").classList.contains("hidden")) closeTodoEditor();
 }
 // Opening an overlay pushes a history entry (see showRecipe / openNoteEditor) so
 // Back closes it. Interactive closes unwind that entry; popstate does the rest.
@@ -1294,6 +1332,564 @@ document.addEventListener("keydown", (e) => {
 });
 
 // ============================================================
+//  To-do (Eisenhower matrix — a sub-view of the Notes tab)
+// ============================================================
+// todo = { id, quadrant: 1|2|3|4, title, note, due: "YYYY-MM-DD", done, ts }
+const TODOS_KEY = "mealPlanner.todos.v1";
+let todos = loadTodos();
+let todosPushTimer = null;
+let notesSubView = "notes"; // "notes" | "todo"
+let editingTodoId = null;
+let todoQuadrant = 1; // quadrant selected in the editor
+
+function loadTodos() {
+  try {
+    const t = JSON.parse(localStorage.getItem(TODOS_KEY));
+    return Array.isArray(t) ? t : [];
+  } catch {
+    return [];
+  }
+}
+function saveTodos() {
+  localStorage.setItem(TODOS_KEY, JSON.stringify(todos));
+  scheduleTodosPush();
+}
+function scheduleTodosPush() {
+  if (!syncEnabled) return;
+  clearTimeout(todosPushTimer);
+  todosPushTimer = setTimeout(() => {
+    fetch("/api/todos", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ todos }),
+    }).catch(() => {});
+  }, 700);
+}
+
+// Swap between the Quick-notes list and the To-do matrix.
+function renderNotesView() {
+  const isTodo = notesSubView === "todo";
+  $("#quickNotes").classList.toggle("hidden", isTodo);
+  $("#todoView").classList.toggle("hidden", !isTodo);
+  document
+    .querySelectorAll("#notesView .chip")
+    .forEach((b) => b.classList.toggle("active", b.dataset.view === notesSubView));
+  if (isTodo) renderTodo();
+  else renderNotes();
+}
+document.querySelectorAll("#notesView .chip").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    notesSubView = btn.dataset.view;
+    renderNotesView();
+  });
+});
+
+function fmtDue(due) {
+  return parseKey(due).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+const isOverdue = (due) => Boolean(due) && due < isoDate(new Date());
+function noteGlyph() {
+  return `<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M4 11h16M4 16h10"/></svg>`;
+}
+
+function renderTodo() {
+  [1, 2, 3, 4].forEach((q) => {
+    const wrap = $("#quadItems" + q);
+    if (!wrap) return;
+    wrap.innerHTML = "";
+    todos
+      .filter((t) => t.quadrant === q)
+      .sort((a, b) => a.done - b.done || (a.ts || 0) - (b.ts || 0))
+      .forEach((t) => wrap.appendChild(todoRow(t)));
+  });
+}
+
+function todoRow(t) {
+  const row = document.createElement("div");
+  row.className = "todo-item" + (t.done ? " done" : "");
+  const cb = document.createElement("input");
+  cb.type = "checkbox";
+  cb.className = "todo-check";
+  cb.checked = Boolean(t.done);
+  cb.addEventListener("click", (e) => e.stopPropagation());
+  cb.addEventListener("change", () => {
+    t.done = cb.checked;
+    saveTodos();
+    renderTodo();
+  });
+
+  const body = document.createElement("div");
+  body.className = "todo-body";
+  const title = document.createElement("div");
+  title.className = "todo-title";
+  title.textContent = t.title;
+  body.appendChild(title);
+  if (t.due || t.note) {
+    const meta = document.createElement("div");
+    meta.className = "todo-meta";
+    if (t.due) {
+      const due = document.createElement("span");
+      due.className = "todo-due" + (isOverdue(t.due) && !t.done ? " overdue" : "");
+      due.textContent = fmtDue(t.due);
+      meta.appendChild(due);
+    }
+    if (t.note) {
+      const glyph = document.createElement("span");
+      glyph.className = "todo-noteicon";
+      glyph.title = "Has notes";
+      glyph.innerHTML = noteGlyph();
+      meta.appendChild(glyph);
+    }
+    body.appendChild(meta);
+  }
+  body.addEventListener("click", () => openTodoEditor(t.quadrant, t.id));
+  row.append(cb, body);
+  return row;
+}
+
+// One "Add task" bubble at the top opens the editor, defaulting to the last
+// quadrant used (the editor's quadrant picker lets you place it anywhere).
+$("#todoAdd").addEventListener("click", () => openTodoEditor(todoQuadrant || 1));
+
+// ---- To-do item editor ----
+function openTodoEditor(quadrant, id = null) {
+  editingTodoId = id;
+  const existing = id ? todos.find((t) => t.id === id) : null;
+  setTodoQuadrant(existing ? existing.quadrant : quadrant);
+  $("#todoTitleInput").value = existing ? existing.title : "";
+  $("#todoNoteInput").value = existing ? existing.note || "" : "";
+  $("#todoDueInput").value = existing ? existing.due || "" : "";
+  $("#todoEditorTitle").textContent = existing ? "Edit task" : "New task";
+  $("#todoDeleteBtn").classList.toggle("hidden", !existing);
+  $("#todoEditor").classList.remove("hidden");
+  pushOverlayState(); // Back closes the editor rather than the app
+  if (!existing) $("#todoTitleInput").focus();
+}
+function closeTodoEditor() {
+  $("#todoEditor").classList.add("hidden");
+  editingTodoId = null;
+}
+function setTodoQuadrant(q) {
+  todoQuadrant = q;
+  document
+    .querySelectorAll("#todoQuadrant .quad-opt")
+    .forEach((b) => b.classList.toggle("on", Number(b.dataset.q) === q));
+}
+document.querySelectorAll("#todoQuadrant .quad-opt").forEach((b) => {
+  b.addEventListener("click", () => setTodoQuadrant(Number(b.dataset.q)));
+});
+function saveTodoEditor() {
+  const title = $("#todoTitleInput").value.trim();
+  if (!title) return $("#todoTitleInput").focus();
+  const note = $("#todoNoteInput").value.trim();
+  const due = $("#todoDueInput").value || "";
+  if (editingTodoId) {
+    const t = todos.find((x) => x.id === editingTodoId);
+    if (t) {
+      t.title = title;
+      t.note = note;
+      t.due = due;
+      t.quadrant = todoQuadrant;
+    }
+  } else {
+    todos.push({
+      id: Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
+      quadrant: todoQuadrant,
+      title,
+      note,
+      due,
+      done: false,
+      ts: Date.now(),
+    });
+  }
+  saveTodos();
+  renderTodo();
+  dismissOverlays();
+}
+$("#todoEditorSave").addEventListener("click", saveTodoEditor);
+$("#todoEditorCancel").addEventListener("click", dismissOverlays);
+$("#todoDueClear").addEventListener("click", () => ($("#todoDueInput").value = ""));
+$("#todoDeleteBtn").addEventListener("click", () => {
+  if (!editingTodoId) return;
+  todos = todos.filter((t) => t.id !== editingTodoId);
+  saveTodos();
+  renderTodo();
+  dismissOverlays();
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !$("#todoEditor").classList.contains("hidden")) dismissOverlays();
+});
+
+// ============================================================
+//  Calendar (month grid; events tagged to Andrew / Katie / Both)
+// ============================================================
+// event = { id, date: "YYYY-MM-DD", title, person: "0" | "1" | "both", time?: "HH:MM" }
+const EVENTS_KEY = "mealPlanner.events.v1";
+let events = loadEvents();
+let eventsPushTimer = null;
+let calMonth = startOfMonth(new Date()); // first of the month currently on screen
+let dayEditorDate = null; // which day the editor is open for
+let editingEventId = null; // event being edited (null = adding new)
+let eventPerson = "0"; // selected person in the add/edit form
+
+function loadEvents() {
+  try {
+    const e = JSON.parse(localStorage.getItem(EVENTS_KEY));
+    return Array.isArray(e) ? e : [];
+  } catch {
+    return [];
+  }
+}
+function saveEvents() {
+  localStorage.setItem(EVENTS_KEY, JSON.stringify(events));
+  scheduleEventsPush();
+}
+function scheduleEventsPush() {
+  if (!syncEnabled) return;
+  clearTimeout(eventsPushTimer);
+  eventsPushTimer = setTimeout(() => {
+    fetch("/api/events", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ events }),
+    }).catch(() => {});
+  }, 700);
+}
+
+function startOfMonth(d) {
+  return new Date(d.getFullYear(), d.getMonth(), 1);
+}
+const MONTHS_FULL = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December",
+];
+// Events for a given day, sorted by time (untimed last), then title.
+function eventsOnDay(dateKey) {
+  return events
+    .filter((e) => e.date === dateKey)
+    .sort((a, b) => {
+      const ta = a.time || "99:99";
+      const tb = b.time || "99:99";
+      return ta === tb ? (a.title || "").localeCompare(b.title || "") : ta.localeCompare(tb);
+    });
+}
+// Small A/K "bubble(s)" matching the chores visual.
+function personBubbles(person) {
+  if (person === "both") return `<span class="pbubble a">A</span><span class="pbubble k">K</span>`;
+  if (person === "1") return `<span class="pbubble k">K</span>`;
+  return `<span class="pbubble a">A</span>`;
+}
+const personClass = (p) => (p === "both" ? "p-both" : p === "1" ? "p-k" : "p-a");
+function fmtTime(t) {
+  if (!t) return "";
+  const [h, m] = t.split(":").map(Number);
+  const ap = h < 12 ? "am" : "pm";
+  const h12 = h % 12 === 0 ? 12 : h % 12;
+  return m ? `${h12}:${String(m).padStart(2, "0")}${ap}` : `${h12}${ap}`;
+}
+// Three scrolling selects — hour, minute (15-min steps), AM/PM — so a time is
+// quick to set without a free-form clock. An empty hour ("–") means "no time".
+const MINUTE_STEPS = ["00", "15", "30", "45"];
+function buildEventTimeOptions() {
+  const hSel = $("#eventHour");
+  if (!hSel) return;
+  const hours = [12, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
+  hSel.innerHTML =
+    `<option value="">–</option>` + hours.map((n) => `<option value="${n}">${n}</option>`).join("");
+  $("#eventMinute").innerHTML = MINUTE_STEPS.map((m) => `<option value="${m}">${m}</option>`).join("");
+  $("#eventAmPm").innerHTML = `<option value="AM">AM</option><option value="PM">PM</option>`;
+}
+// Read the three selects back into a stored 24-hour "HH:MM" (or "" for no time).
+function getEventTime() {
+  const h = $("#eventHour").value;
+  if (!h) return "";
+  let H = parseInt(h, 10) % 12; // 12 → 0
+  if ($("#eventAmPm").value === "PM") H += 12;
+  return `${String(H).padStart(2, "0")}:${$("#eventMinute").value}`;
+}
+// Load a stored "HH:MM" into the three selects (blank = no time).
+function setEventTime(t) {
+  const hSel = $("#eventHour");
+  const mSel = $("#eventMinute");
+  const aSel = $("#eventAmPm");
+  if (!t) {
+    hSel.value = "";
+    mSel.value = "00";
+    aSel.value = "AM";
+    return;
+  }
+  const [H, M] = t.split(":").map(Number);
+  const h12 = H % 12 === 0 ? 12 : H % 12;
+  hSel.value = String(h12);
+  const mStr = String(M).padStart(2, "0");
+  mSel.value = MINUTE_STEPS.includes(mStr) ? mStr : "00"; // snap off-grid legacy times
+  aSel.value = H < 12 ? "AM" : "PM";
+}
+
+function renderCalendar() {
+  const grid = $("#calGrid");
+  if (!grid) return;
+  const year = calMonth.getFullYear();
+  const month = calMonth.getMonth();
+  $("#calLabel").textContent = `${MONTHS_FULL[month]} ${year}`;
+
+  // 6-week window starting on the Monday on/before the 1st.
+  const gridStart = startOfWeek(new Date(year, month, 1));
+  const todayKey = isoDate(new Date());
+  hideWeekPop();
+  grid.innerHTML = "";
+
+  for (let w = 0; w < 6; w++) {
+    const rowStart = new Date(gridStart.getFullYear(), gridStart.getMonth(), gridStart.getDate() + w * 7);
+    const wkKey = isoDate(rowStart); // this row's Monday = the Planner week key
+    const row = document.createElement("div");
+    row.className = "cal-week-row";
+
+    // An "R" bubble in the left gutter — tap for that week's planned recipes.
+    const dishes = weekDishes(wkKey);
+    const bubble = document.createElement("button");
+    bubble.type = "button";
+    bubble.className = "week-bubble" + (dishes.length ? " has" : "");
+    bubble.textContent = "R";
+    bubble.title = dishes.length
+      ? `${dishes.length} recipe${dishes.length === 1 ? "" : "s"} planned this week`
+      : "No recipes planned this week";
+    bubble.addEventListener("click", (e) => {
+      e.stopPropagation();
+      toggleWeekPop(bubble, wkKey);
+    });
+    row.appendChild(bubble);
+
+    for (let dow = 0; dow < 7; dow++) {
+      const d = new Date(rowStart.getFullYear(), rowStart.getMonth(), rowStart.getDate() + dow);
+      const key = isoDate(d);
+      const cell = document.createElement("div");
+      cell.className = "cal-day";
+      if (d.getMonth() !== month) cell.classList.add("other-month");
+      if (key === todayKey) cell.classList.add("today");
+
+      const dayEvents = eventsOnDay(key);
+      const shown = dayEvents.slice(0, 3);
+      const more = dayEvents.length - shown.length;
+      cell.innerHTML = `
+        <div class="cal-daynum">${d.getDate()}</div>
+        <div class="cal-events">
+          ${shown
+            .map(
+              (e) =>
+                `<div class="cal-event ${personClass(e.person)}">${personBubbles(e.person)}<span class="cal-event-title">${escapeHtml(e.title)}</span></div>`
+            )
+            .join("")}
+          ${more > 0 ? `<div class="cal-more">+${more} more</div>` : ""}
+        </div>`;
+      cell.addEventListener("click", () => openDayEditor(key));
+      row.appendChild(cell);
+    }
+    grid.appendChild(row);
+  }
+}
+
+function shiftMonth(delta) {
+  calMonth = new Date(calMonth.getFullYear(), calMonth.getMonth() + delta, 1);
+  renderCalendar();
+}
+$("#calPrev").addEventListener("click", () => shiftMonth(-1));
+$("#calNext").addEventListener("click", () => shiftMonth(1));
+$("#calToday").addEventListener("click", () => {
+  calMonth = startOfMonth(new Date());
+  renderCalendar();
+  openDayEditor(isoDate(new Date()));
+});
+
+// ---- Per-week planned-recipes popover ----
+let weekPopKey = null;
+function hideWeekPop() {
+  const pop = $("#weekPop");
+  if (pop) pop.classList.add("hidden");
+  weekPopKey = null;
+}
+function toggleWeekPop(anchor, wkKey) {
+  const pop = $("#weekPop");
+  if (weekPopKey === wkKey && !pop.classList.contains("hidden")) {
+    hideWeekPop();
+    return;
+  }
+  weekPopKey = wkKey;
+  buildWeekPop(wkKey);
+  pop.classList.remove("hidden");
+  positionWeekPop(anchor);
+}
+function buildWeekPop(wkKey) {
+  const pop = $("#weekPop");
+  const mon = parseKey(wkKey);
+  const dishes = weekDishes(wkKey);
+  let html = `<div class="wp-head">${isThisWeek(wkKey) ? "This week" : "Week of"} <span>${escapeHtml(fmtRange(mon))}</span></div>`;
+  if (dishes.length) {
+    html +=
+      `<div class="wp-list">` +
+      dishes
+        .map(
+          (r) =>
+            `<div class="wp-item"><img src="${r.image || placeholder()}" alt="" loading="lazy" /><span>${escapeHtml(r.title)}</span></div>`
+        )
+        .join("") +
+      `</div>`;
+  } else {
+    html += `<div class="wp-empty">No dishes planned yet.</div>`;
+  }
+  // The Planner only shows this week onward, so the shortcut is offered there.
+  if (wkKey >= weekKeyOf(new Date())) {
+    html += `<button class="wp-open" type="button">${dishes.length ? "Open in Planner" : "Plan this week"} →</button>`;
+  }
+  pop.innerHTML = html;
+  const openBtn = pop.querySelector(".wp-open");
+  if (openBtn)
+    openBtn.addEventListener("click", () => {
+      hideWeekPop();
+      goToPlannerWeek(wkKey);
+    });
+}
+function positionWeekPop(anchor) {
+  const pop = $("#weekPop");
+  const r = anchor.getBoundingClientRect();
+  const popW = pop.offsetWidth;
+  const popH = pop.offsetHeight;
+  const pad = 8;
+  // Prefer just right of the bubble; flip to the left if it would overflow.
+  let left = r.right + pad;
+  if (left + popW > window.innerWidth - pad) left = r.left - popW - pad;
+  left = Math.max(pad, Math.min(left, window.innerWidth - popW - pad));
+  let top = Math.min(r.top, window.innerHeight - popH - pad);
+  top = Math.max(pad, top);
+  pop.style.left = left + "px";
+  pop.style.top = top + "px";
+}
+function goToPlannerWeek(wkKey) {
+  const floor = startOfWeek(new Date());
+  let start = startOfWeek(parseKey(wkKey));
+  if (start < floor) start = floor;
+  windowStart = start;
+  if (wkKey >= weekKeyOf(new Date())) targetWeek = wkKey;
+  activateTab("plan"); // renderPlanner() runs inside
+}
+// Dismiss the popover on an outside click or any scroll.
+document.addEventListener("click", (e) => {
+  const pop = $("#weekPop");
+  if (!pop || pop.classList.contains("hidden")) return;
+  if (e.target.closest("#weekPop") || e.target.closest(".week-bubble")) return;
+  hideWeekPop();
+});
+window.addEventListener("scroll", () => hideWeekPop(), true);
+
+// ---- Day detail / event editor ----
+function openDayEditor(dateKey) {
+  dayEditorDate = dateKey;
+  editingEventId = null;
+  setEventPerson("0");
+  const d = parseKey(dateKey);
+  $("#dayEditorTitle").textContent = d.toLocaleDateString(undefined, {
+    weekday: "short",
+    month: "long",
+    day: "numeric",
+  });
+  $("#addEventTitle").value = "";
+  setEventTime("");
+  $("#addEventSubmit").textContent = "Add";
+  renderDayEvents();
+  $("#dayEditor").classList.remove("hidden");
+  pushOverlayState(); // Back closes the editor rather than the app
+}
+function closeDayEditor() {
+  $("#dayEditor").classList.add("hidden");
+  dayEditorDate = null;
+  editingEventId = null;
+}
+function renderDayEvents() {
+  const list = $("#dayEventList");
+  list.innerHTML = "";
+  const dayEvents = eventsOnDay(dayEditorDate);
+  $("#dayEventEmpty").classList.toggle("hidden", dayEvents.length > 0);
+  dayEvents.forEach((e) => {
+    const row = document.createElement("div");
+    row.className = "event-row" + (e.id === editingEventId ? " editing" : "");
+    row.innerHTML = `
+      <span class="event-bubbles">${personBubbles(e.person)}</span>
+      ${e.time ? `<span class="event-time">${fmtTime(e.time)}</span>` : ""}
+      <span class="event-title">${escapeHtml(e.title)}</span>
+      <button class="event-del" aria-label="Delete event">✕</button>`;
+    row.querySelector(".event-title").addEventListener("click", () => startEditEvent(e));
+    row.querySelector(".event-bubbles").addEventListener("click", () => startEditEvent(e));
+    row.querySelector(".event-del").addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      events = events.filter((x) => x.id !== e.id);
+      if (editingEventId === e.id) resetEventForm();
+      saveEvents();
+      renderDayEvents();
+      renderCalendar();
+    });
+    list.appendChild(row);
+  });
+}
+function startEditEvent(e) {
+  editingEventId = e.id;
+  setEventPerson(e.person);
+  $("#addEventTitle").value = e.title;
+  setEventTime(e.time || "");
+  $("#addEventSubmit").textContent = "Save";
+  renderDayEvents();
+  $("#addEventTitle").focus();
+}
+function resetEventForm() {
+  editingEventId = null;
+  setEventPerson("0");
+  $("#addEventTitle").value = "";
+  setEventTime("");
+  $("#addEventSubmit").textContent = "Add";
+}
+function setEventPerson(p) {
+  eventPerson = p;
+  document
+    .querySelectorAll("#eventPerson [data-p]")
+    .forEach((b) => b.classList.toggle("on", b.dataset.p === p));
+}
+document.querySelectorAll("#eventPerson [data-p]").forEach((b) => {
+  b.addEventListener("click", () => setEventPerson(b.dataset.p));
+});
+
+$("#addEventForm").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const title = $("#addEventTitle").value.trim();
+  if (!title || !dayEditorDate) return;
+  const time = getEventTime();
+  if (editingEventId) {
+    const ev = events.find((x) => x.id === editingEventId);
+    if (ev) {
+      ev.title = title;
+      ev.person = eventPerson;
+      ev.time = time;
+    }
+  } else {
+    events.push({
+      id: Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
+      date: dayEditorDate,
+      title,
+      person: eventPerson,
+      time,
+    });
+  }
+  saveEvents();
+  resetEventForm();
+  renderDayEvents();
+  renderCalendar();
+  $("#addEventTitle").focus();
+});
+$("#dayEditorClose").addEventListener("click", dismissOverlays);
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !$("#dayEditor").classList.contains("hidden")) dismissOverlays();
+});
+buildEventTimeOptions();
+
+// ============================================================
 //  Chores & habits (daily checklist, per-person, with streaks)
 // ============================================================
 const TRACKER_KEY = "mealPlanner.tracker.v1";
@@ -1948,6 +2544,7 @@ async function init() {
   updateNotesCount();
   updateTargetBanner();
   renderPlanner();
+  renderCalendar(); // Calendar is the default landing view
   try {
     const cfg = await (await fetch("/api/config")).json();
     if (!cfg.hasKey) $("#keyBanner").classList.remove("hidden");

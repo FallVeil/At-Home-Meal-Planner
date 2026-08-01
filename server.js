@@ -265,6 +265,40 @@ app.put("/api/notes", async (req, res) => {
     res.status(502).json({ error: "Could not save notes." });
   }
 });
+app.get("/api/events", async (req, res) => {
+  if (!storageEnabled) return res.json({ enabled: false });
+  try {
+    res.json({ enabled: true, events: (await redisGetJSON("meal:events")) || [] });
+  } catch {
+    res.status(502).json({ error: "Could not read calendar events." });
+  }
+});
+app.put("/api/events", async (req, res) => {
+  if (!storageEnabled) return res.json({ enabled: false });
+  try {
+    await redisSetJSON("meal:events", req.body?.events || []);
+    res.json({ ok: true });
+  } catch {
+    res.status(502).json({ error: "Could not save calendar events." });
+  }
+});
+app.get("/api/todos", async (req, res) => {
+  if (!storageEnabled) return res.json({ enabled: false });
+  try {
+    res.json({ enabled: true, todos: (await redisGetJSON("meal:todos")) || [] });
+  } catch {
+    res.status(502).json({ error: "Could not read the to-do list." });
+  }
+});
+app.put("/api/todos", async (req, res) => {
+  if (!storageEnabled) return res.json({ enabled: false });
+  try {
+    await redisSetJSON("meal:todos", req.body?.todos || []);
+    res.json({ ok: true });
+  } catch {
+    res.status(502).json({ error: "Could not save the to-do list." });
+  }
+});
 app.get("/api/tracker", async (req, res) => {
   if (!storageEnabled) return res.json({ enabled: false });
   try {

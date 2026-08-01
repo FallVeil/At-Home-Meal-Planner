@@ -12,6 +12,11 @@
   --rose: #cf8b8f;
   --rose-ink: #42191c;
   --katie: #cf8a55; /* warm muted orange (Katie's chore colour) — pairs with the sage green */
+  /* Eisenhower-matrix quadrant hues (muted to sit with the sage theme) */
+  --q1: #cf7d72; /* I  · urgent + important   — red   */
+  --q2: #d2a24e; /* II · not urgent + important — gold  */
+  --q3: #6f8fca; /* III· urgent + unimportant  — blue  */
+  --q4: #62a078; /* IV · not urgent + unimportant — green */
   --danger: #d17d76;
   --shadow: 0 2px 14px rgba(0, 0, 0, 0.28);
   --radius: 14px;
@@ -652,6 +657,366 @@ button { font-family: inherit; }
 .note-editor textarea:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
 .note-editor textarea::placeholder { color: var(--muted); }
 
+/* To-do (Eisenhower matrix) */
+.matrix-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.quad {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 12px 12px 10px;
+  display: flex;
+  flex-direction: column;
+  min-height: 152px;
+  box-shadow: var(--shadow);
+}
+.quad-head { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.quad-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  font-family: var(--font-display);
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: #fff;
+  flex: none;
+  line-height: 1;
+}
+.quad-label { font-size: 0.9rem; font-weight: 600; line-height: 1.2; }
+.q1 .quad-badge { background: var(--q1); }
+.q1 .quad-label { color: var(--q1); }
+.q2 .quad-badge { background: var(--q2); }
+.q2 .quad-label { color: var(--q2); }
+.q3 .quad-badge { background: var(--q3); }
+.q3 .quad-label { color: var(--q3); }
+.q4 .quad-badge { background: var(--q4); }
+.q4 .quad-label { color: var(--q4); }
+.quad-items { display: flex; flex-direction: column; gap: 3px; flex: 1; }
+.todo-item { display: flex; gap: 8px; align-items: flex-start; padding: 3px 2px; }
+.todo-check { width: 18px; height: 18px; margin-top: 2px; flex: none; cursor: pointer; }
+.q1 .todo-check { accent-color: var(--q1); }
+.q2 .todo-check { accent-color: var(--q2); }
+.q3 .todo-check { accent-color: var(--q3); }
+.q4 .todo-check { accent-color: var(--q4); }
+.todo-body { flex: 1; min-width: 0; cursor: pointer; }
+.todo-title { font-size: 0.92rem; line-height: 1.28; }
+.todo-item.done .todo-title { text-decoration: line-through; color: var(--muted); }
+.todo-meta { display: flex; align-items: center; gap: 6px; margin-top: 3px; }
+.todo-due {
+  font-size: 0.68rem;
+  color: var(--muted);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 1px 8px;
+  white-space: nowrap;
+}
+.todo-due.overdue { color: var(--danger); border-color: var(--danger); }
+.todo-noteicon { color: var(--muted); display: inline-flex; align-items: center; }
+.todo-top { display: flex; justify-content: flex-end; margin-bottom: 12px; }
+.todo-add-btn {
+  background: var(--green);
+  color: #fff;
+  border: none;
+  padding: 9px 20px;
+  border-radius: 999px;
+  font-weight: 600;
+  font-size: 0.9rem;
+  cursor: pointer;
+  box-shadow: var(--shadow);
+}
+.todo-add-btn:hover { background: var(--green-dark); }
+.todo-add-btn:active { transform: scale(0.97); }
+
+/* To-do editor fields (reuses the .day-editor full-screen shell) */
+.todo-editor-body { display: flex; flex-direction: column; padding-bottom: 24px; }
+.field-label { font-size: 0.8rem; color: var(--muted); font-weight: 600; margin: 16px 0 6px; }
+.field-label:first-child { margin-top: 0; }
+.field-opt { color: var(--muted); font-weight: 400; }
+.todo-editor-body input[type="text"],
+.todo-editor-body input[type="date"],
+.todo-editor-body textarea {
+  width: 100%;
+  padding: 11px 13px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--card);
+  color: var(--ink);
+  font: inherit;
+  font-size: 16px;
+}
+.todo-editor-body textarea { resize: vertical; line-height: 1.5; }
+.todo-editor-body input:focus,
+.todo-editor-body textarea:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.quad-pick { display: flex; flex-direction: column; gap: 8px; }
+.quad-opt {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1.5px solid var(--line);
+  border-radius: 10px;
+  background: var(--card);
+  color: var(--ink);
+  cursor: pointer;
+  font-size: 0.9rem;
+  font-weight: 500;
+  text-align: left;
+}
+.quad-opt .quad-badge { width: 22px; height: 22px; font-size: 0.7rem; }
+.quad-opt.on.q1 { border-color: var(--q1); box-shadow: inset 0 0 0 1px var(--q1); }
+.quad-opt.on.q2 { border-color: var(--q2); box-shadow: inset 0 0 0 1px var(--q2); }
+.quad-opt.on.q3 { border-color: var(--q3); box-shadow: inset 0 0 0 1px var(--q3); }
+.quad-opt.on.q4 { border-color: var(--q4); box-shadow: inset 0 0 0 1px var(--q4); }
+.due-row { display: flex; gap: 8px; align-items: center; }
+.due-row input[type="date"] { flex: 1; }
+#todoDeleteBtn { margin-top: 22px; align-self: flex-start; }
+
+/* Calendar */
+.cal-legend { display: flex; align-items: center; gap: 16px; margin: 6px 0 12px; font-size: 0.82rem; color: var(--muted); }
+.legend-item { display: inline-flex; align-items: center; gap: 6px; }
+#calToday { margin-left: auto; }
+/* A/K "bubble" — the shared per-person marker used on events & in the legend. */
+.pbubble {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 17px;
+  height: 17px;
+  border-radius: 50%;
+  font-size: 0.62rem;
+  font-weight: 700;
+  color: #fff;
+  line-height: 1;
+  flex: none;
+}
+.pbubble.a { background: var(--green); }
+.pbubble.k { background: var(--katie); }
+
+/* The legend, weekday header and day grid share a left indent — this reserves a
+   left "gutter lane" the week bubbles hang in, while keeping the day boxes lined
+   up with the A/K legend above them. */
+.cal-legend, .cal-weekdays, .cal-grid { padding-left: 40px; }
+.cal-weekdays { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; margin-bottom: 4px; }
+.cal-weekdays span {
+  text-align: center;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+.cal-grid { display: flex; flex-direction: column; gap: 4px; }
+.cal-week-row { position: relative; display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
+
+/* Recipe "R" bubble sitting in the gutter to the left of each week row. */
+.week-bubble {
+  position: absolute;
+  top: 8px;
+  left: -32px;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 1px solid var(--line);
+  background: var(--card);
+  color: var(--muted);
+  font-family: var(--font-display);
+  font-size: 0.84rem;
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  line-height: 1;
+  box-shadow: var(--shadow);
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+.week-bubble.has { background: var(--accent); color: #21341a; border-color: var(--accent); }
+.week-bubble:hover { border-color: var(--accent); }
+.week-bubble:active { transform: scale(0.92); }
+
+/* Floating condensed recipe list for a week (fixed-positioned via JS). */
+.week-pop {
+  position: fixed;
+  z-index: 45;
+  width: 232px;
+  max-width: calc(100vw - 24px);
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45);
+  padding: 12px;
+}
+.wp-head { font-size: 0.82rem; color: var(--muted); margin-bottom: 8px; }
+.wp-head span { color: var(--ink); font-weight: 600; }
+.wp-list { display: flex; flex-direction: column; gap: 7px; max-height: 240px; overflow-y: auto; }
+.wp-item { display: flex; align-items: center; gap: 8px; }
+.wp-item img { width: 30px; height: 30px; border-radius: 6px; object-fit: cover; background: #383b35; flex: none; }
+.wp-item span {
+  font-size: 0.82rem;
+  line-height: 1.2;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+.wp-empty { font-size: 0.85rem; color: var(--muted); padding: 2px 0 6px; }
+.wp-open {
+  margin-top: 10px;
+  width: 100%;
+  background: var(--green);
+  color: #fff;
+  border: none;
+  padding: 9px 12px;
+  border-radius: 8px;
+  font-weight: 600;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+.wp-open:hover { background: var(--green-dark); }
+
+/* Event time picker: three compact selects (hour / minute / AM-PM). */
+.time-pick { display: flex; gap: 6px; flex: 0 0 auto; }
+.time-pick select {
+  padding: 10px 6px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--card);
+  color: var(--ink);
+  font-size: 16px;
+  cursor: pointer;
+}
+.time-pick select:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.cal-day {
+  min-height: 94px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 4px 4px 6px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  overflow: hidden;
+  transition: border-color 0.15s ease;
+}
+.cal-day:hover { border-color: var(--accent); }
+.cal-day.other-month { opacity: 0.42; }
+.cal-daynum { font-size: 0.78rem; color: var(--muted); text-align: right; padding: 1px 3px; flex: none; }
+.cal-day.today .cal-daynum {
+  color: #21341a;
+  background: var(--accent);
+  font-weight: 700;
+  border-radius: 50%;
+  width: 22px;
+  height: 22px;
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.cal-events { display: flex; flex-direction: column; gap: 2px; overflow: hidden; }
+.cal-event {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 0.68rem;
+  line-height: 1.25;
+  padding: 1px 4px;
+  border-radius: 5px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.cal-event .pbubble { width: 13px; height: 13px; font-size: 0.5rem; }
+.cal-event-title { overflow: hidden; text-overflow: ellipsis; }
+.cal-event.p-a { background: rgba(79, 140, 98, 0.22); }
+.cal-event.p-k { background: rgba(207, 138, 85, 0.22); }
+.cal-event.p-both { background: rgba(166, 193, 153, 0.16); }
+.cal-more { font-size: 0.62rem; color: var(--muted); padding-left: 3px; }
+
+/* Day detail / event editor (full-screen overlay) */
+.day-editor {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  padding: 14px;
+  gap: 14px;
+}
+.day-editor-bar { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.day-editor-bar h2 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-weight: 500;
+  font-size: 1.2rem;
+  text-align: center;
+  flex: 1;
+}
+.bar-spacer { width: 64px; flex: none; }
+.day-editor-body { flex: 1; overflow-y: auto; width: 100%; max-width: 640px; margin: 0 auto; }
+.event-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  margin-bottom: 8px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+}
+.event-row.editing { border-color: var(--accent); }
+.event-bubbles { display: inline-flex; gap: 3px; flex: none; cursor: pointer; }
+.event-time { color: var(--accent); font-size: 0.82rem; font-weight: 600; flex: none; }
+.event-title { flex: 1; min-width: 0; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.event-del { background: transparent; border: none; color: var(--muted); cursor: pointer; font-size: 0.95rem; padding: 2px 6px; flex: none; }
+.event-del:hover { color: var(--danger); }
+.add-event { margin-top: 16px; display: flex; flex-direction: column; gap: 12px; }
+.person-pick { display: flex; align-items: center; gap: 8px; }
+.person-pick .pbtn { width: 34px; height: 34px; font-size: 0.85rem; }
+.person-pick .pbtn.on.a { background: var(--green); color: #fff; border-color: var(--green); }
+.person-pick .pbtn.on.k { background: var(--katie); color: #fff; border-color: var(--katie); }
+.both-pick {
+  padding: 8px 14px;
+  border-radius: 999px;
+  border: 1.5px solid var(--line);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+.both-pick.on { background: var(--accent); color: #21341a; border-color: var(--accent); }
+.event-fields { display: flex; gap: 8px; flex-wrap: wrap; }
+.event-fields input[type="text"] {
+  flex: 1 1 180px;
+  min-width: 0;
+  padding: 11px 13px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--card);
+  color: var(--ink);
+  font-size: 16px;
+}
+.event-fields input[type="text"]::placeholder { color: var(--muted); }
+.event-fields input:focus,
+.event-fields select:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.event-fields button {
+  flex: none;
+  background: var(--green);
+  color: #fff;
+  border: none;
+  padding: 10px 20px;
+  border-radius: 10px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.event-fields button:hover { background: var(--green-dark); }
+
 /* Chores & habits */
 .chip-row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
 .chip-row .chip { width: auto; padding: 7px 14px; }
@@ -1017,6 +1382,28 @@ button { font-family: inherit; }
   .primary.big { width: 100%; }
   .modal { padding: 0; }
   .modal-card { max-height: 100vh; border-radius: 0; }
+
+  /* To-do matrix: keep two columns (the whole point), just tighten it up. */
+  .matrix-grid { gap: 8px; }
+  .quad { min-height: 132px; padding: 10px 9px 8px; }
+  .quad-head { gap: 6px; margin-bottom: 8px; }
+  .quad-badge { width: 23px; height: 23px; font-size: 0.74rem; }
+  .quad-label { font-size: 0.76rem; }
+  .todo-title { font-size: 0.85rem; }
+
+  /* Calendar: compact month grid — events collapse to person-coloured bars. */
+  .cal-legend, .cal-weekdays, .cal-grid { padding-left: 30px; }
+  .cal-weekdays { gap: 3px; }
+  .cal-grid, .cal-week-row { gap: 3px; }
+  .week-bubble { left: -26px; top: 6px; width: 21px; height: 21px; font-size: 0.74rem; }
+  .cal-weekdays span { font-size: 0.6rem; }
+  .cal-day { min-height: 62px; padding: 3px; border-radius: 6px; }
+  .cal-daynum { font-size: 0.7rem; padding: 0 2px; }
+  .cal-day.today .cal-daynum { width: 19px; height: 19px; }
+  .cal-event { padding: 1px 2px; gap: 2px; }
+  .cal-event-title { display: none; }
+  .cal-event .pbubble { width: 12px; height: 12px; font-size: 0.46rem; }
+  .cal-more { font-size: 0.55rem; }
 }
 
 /* One-column cards on very narrow phones. */

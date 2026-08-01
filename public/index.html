@@ -29,7 +29,8 @@
       </svg>
       <h1>At-Home Meal Planner</h1>
       <nav class="tabs">
-        <button class="tab active" data-tab="plan">Planner</button>
+        <button class="tab active" data-tab="calendar">Calendar</button>
+        <button class="tab" data-tab="plan">Planner</button>
         <button class="tab" data-tab="search">Find Recipes</button>
         <button class="tab" data-tab="grocery">Grocery List</button>
         <button class="tab" data-tab="notes">Notes</button>
@@ -94,7 +95,7 @@
       </section>
 
       <!-- PLANNER (rolling window: this week + next four) -->
-      <section id="tab-plan" class="panel active">
+      <section id="tab-plan" class="panel">
         <div class="month-nav">
           <button id="prevMonth" class="nav-arrow" aria-label="Earlier weeks">◀</button>
           <h2 id="monthLabel">Weeks</h2>
@@ -106,6 +107,25 @@
           Use the arrows to plan further ahead.
         </p>
         <div id="weeksContainer"></div>
+      </section>
+
+      <!-- CALENDAR (month grid; events tagged to Andrew / Katie) -->
+      <section id="tab-calendar" class="panel active">
+        <div class="month-nav">
+          <button id="calPrev" class="nav-arrow" aria-label="Previous month">◀</button>
+          <h2 id="calLabel">Month</h2>
+          <button id="calNext" class="nav-arrow" aria-label="Next month">▶</button>
+        </div>
+        <div class="cal-legend">
+          <span class="legend-item"><span class="pbubble a">A</span> Andrew</span>
+          <span class="legend-item"><span class="pbubble k">K</span> Katie</span>
+          <button id="calToday" class="linkish" type="button">Today</button>
+        </div>
+        <div class="cal-weekdays">
+          <span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span><span>Sun</span>
+        </div>
+        <div id="calGrid" class="cal-grid"></div>
+        <div id="weekPop" class="week-pop hidden"></div>
       </section>
 
       <!-- GROCERY LIST -->
@@ -139,22 +159,53 @@
         </div>
       </section>
 
-      <!-- NOTES -->
+      <!-- NOTES (Quick notes + Eisenhower-matrix To-do) -->
       <section id="tab-notes" class="panel">
         <div class="section-head">
           <h2>Notes</h2>
         </div>
-        <form id="addNoteForm" class="add-note">
-          <textarea
-            id="addNoteInput"
-            rows="2"
-            placeholder="Add a note — reminders, meal ideas, what to restock"
-          ></textarea>
-          <button type="submit">Add note</button>
-        </form>
-        <div id="notesList"></div>
-        <div id="notesEmpty" class="empty">
-          No notes yet. Jot down reminders, meal ideas, or what to restock.
+        <div class="chip-row" id="notesView">
+          <button type="button" class="chip active" data-view="notes">Quick notes</button>
+          <button type="button" class="chip" data-view="todo">To-do</button>
+        </div>
+
+        <div id="quickNotes">
+          <form id="addNoteForm" class="add-note">
+            <textarea
+              id="addNoteInput"
+              rows="2"
+              placeholder="Add a note — reminders, meal ideas, what to restock"
+            ></textarea>
+            <button type="submit">Add note</button>
+          </form>
+          <div id="notesList"></div>
+          <div id="notesEmpty" class="empty">
+            No notes yet. Jot down reminders, meal ideas, or what to restock.
+          </div>
+        </div>
+
+        <div id="todoView" class="hidden">
+          <div class="todo-top">
+            <button type="button" id="todoAdd" class="todo-add-btn">+ Add task</button>
+          </div>
+          <div class="matrix-grid">
+            <div class="quad q1">
+              <div class="quad-head"><span class="quad-badge">I</span><span class="quad-label">Urgent &amp; Important</span></div>
+              <div class="quad-items" id="quadItems1"></div>
+            </div>
+            <div class="quad q2">
+              <div class="quad-head"><span class="quad-badge">II</span><span class="quad-label">Not Urgent &amp; Important</span></div>
+              <div class="quad-items" id="quadItems2"></div>
+            </div>
+            <div class="quad q3">
+              <div class="quad-head"><span class="quad-badge">III</span><span class="quad-label">Urgent &amp; Unimportant</span></div>
+              <div class="quad-items" id="quadItems3"></div>
+            </div>
+            <div class="quad q4">
+              <div class="quad-head"><span class="quad-badge">IV</span><span class="quad-label">Not Urgent &amp; Unimportant</span></div>
+              <div class="quad-items" id="quadItems4"></div>
+            </div>
+          </div>
         </div>
       </section>
 
@@ -214,6 +265,63 @@
         <button id="noteEditorSave" class="primary">Save</button>
       </div>
       <textarea id="noteEditorInput" placeholder="Write your note…"></textarea>
+    </div>
+
+    <!-- Day detail / event editor -->
+    <div id="dayEditor" class="day-editor hidden">
+      <div class="day-editor-bar">
+        <button id="dayEditorClose" class="ghost">Close</button>
+        <h2 id="dayEditorTitle"></h2>
+        <span class="bar-spacer"></span>
+      </div>
+      <div class="day-editor-body">
+        <div id="dayEventList"></div>
+        <div id="dayEventEmpty" class="empty">No events yet for this day.</div>
+        <form id="addEventForm" class="add-event">
+          <div class="person-pick" id="eventPerson">
+            <button type="button" class="pbtn a on" data-p="0" aria-label="Andrew">A</button>
+            <button type="button" class="pbtn k" data-p="1" aria-label="Katie">K</button>
+            <button type="button" class="both-pick" data-p="both">Both</button>
+          </div>
+          <div class="event-fields">
+            <input id="addEventTitle" type="text" placeholder="Add an event…" autocomplete="off" />
+            <div class="time-pick">
+              <select id="eventHour" aria-label="Hour"></select>
+              <select id="eventMinute" aria-label="Minute"></select>
+              <select id="eventAmPm" aria-label="AM or PM"></select>
+            </div>
+            <button type="submit" id="addEventSubmit">Add</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- To-do item editor -->
+    <div id="todoEditor" class="day-editor hidden">
+      <div class="day-editor-bar">
+        <button id="todoEditorCancel" class="ghost">Cancel</button>
+        <h2 id="todoEditorTitle">New task</h2>
+        <button id="todoEditorSave" class="primary">Save</button>
+      </div>
+      <div class="day-editor-body todo-editor-body">
+        <label class="field-label">Quadrant</label>
+        <div class="quad-pick" id="todoQuadrant">
+          <button type="button" class="quad-opt q1" data-q="1"><span class="quad-badge">I</span> Urgent &amp; Important</button>
+          <button type="button" class="quad-opt q2" data-q="2"><span class="quad-badge">II</span> Not Urgent &amp; Important</button>
+          <button type="button" class="quad-opt q3" data-q="3"><span class="quad-badge">III</span> Urgent &amp; Unimportant</button>
+          <button type="button" class="quad-opt q4" data-q="4"><span class="quad-badge">IV</span> Not Urgent &amp; Unimportant</button>
+        </div>
+        <label class="field-label" for="todoTitleInput">Task</label>
+        <input id="todoTitleInput" type="text" placeholder="What needs doing?" autocomplete="off" />
+        <label class="field-label" for="todoNoteInput">Notes <span class="field-opt">(optional)</span></label>
+        <textarea id="todoNoteInput" rows="4" placeholder="Any details…"></textarea>
+        <label class="field-label" for="todoDueInput">Due date <span class="field-opt">(optional)</span></label>
+        <div class="due-row">
+          <input id="todoDueInput" type="date" />
+          <button type="button" id="todoDueClear" class="ghost">Clear</button>
+        </div>
+        <button type="button" id="todoDeleteBtn" class="ghost danger hidden">Delete task</button>
+      </div>
     </div>
 
     <script src="app.js"></script>
