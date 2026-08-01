@@ -29,7 +29,8 @@
       </svg>
       <h1>At-Home Meal Planner</h1>
       <nav class="tabs">
-        <button class="tab active" data-tab="calendar">Calendar</button>
+        <button class="tab active" data-tab="home">Home</button>
+        <button class="tab" data-tab="calendar">Calendar</button>
         <button class="tab" data-tab="plan">Planner</button>
         <button class="tab" data-tab="search">Find Recipes</button>
         <button class="tab" data-tab="grocery">Grocery List</button>
@@ -43,6 +44,11 @@
     </div>
 
     <main>
+      <!-- HOME (dashboard: today's pertinent info in content-sized cards) -->
+      <section id="tab-home" class="panel active">
+        <div id="dashGrid" class="dash-grid"></div>
+      </section>
+
       <!-- FIND RECIPES (Favorites nested at the top of the category rail) -->
       <section id="tab-search" class="panel">
         <div class="search-layout">
@@ -110,7 +116,7 @@
       </section>
 
       <!-- CALENDAR (month grid; events tagged to Andrew / Katie) -->
-      <section id="tab-calendar" class="panel active">
+      <section id="tab-calendar" class="panel">
         <div class="month-nav">
           <button id="calPrev" class="nav-arrow" aria-label="Previous month">◀</button>
           <h2 id="calLabel">Month</h2>

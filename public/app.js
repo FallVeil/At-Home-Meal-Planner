@@ -37,6 +37,8 @@ function savePlan() {
   localStorage.setItem(PLAN_KEY, JSON.stringify(plan));
   updatePlanCount();
   schedulePlanPush();
+  renderHomeIfActive();
+  renderCalendarIfActive();
 }
 const weekDishes = (key) => plan[key] || [];
 const inWeek = (key, id) => weekDishes(key).some((r) => String(r.id) === String(id));
@@ -159,6 +161,7 @@ async function refreshFromServer() {
       todos = dr.todos;
       localStorage.setItem(TODOS_KEY, JSON.stringify(todos));
     }
+    if ($("#tab-home").classList.contains("active")) renderHome();
     if ($("#tab-plan").classList.contains("active")) renderPlanner();
     if (favViewActive()) renderFavorites();
     if ($("#tab-grocery").classList.contains("active") && groceryWeek) {
@@ -305,10 +308,10 @@ document.querySelectorAll(".tab").forEach((tab) => {
 // ------------------------------------------------------------
 //  Back-button / in-app history
 //  Phone Back/swipe would otherwise close the whole app. We keep the
-//  Calendar as a "home" base entry and push a history entry whenever we
+//  Home dashboard as a "home" base entry and push a history entry whenever we
 //  leave it, so Back returns here first and only exits from home.
 // ------------------------------------------------------------
-const HOME_TAB = "calendar";
+const HOME_TAB = "home";
 let currentTab = HOME_TAB;
 
 function activateTab(name, fromHistory = false) {
@@ -334,6 +337,10 @@ function activateTab(name, fromHistory = false) {
   document
     .querySelectorAll(".panel")
     .forEach((p) => p.classList.toggle("active", p.id === `tab-${name}`));
+  if (name === "home") {
+    renderHome();
+    refreshFromServer();
+  }
   if (name === "plan") {
     renderPlanner();
     refreshFromServer();
@@ -1388,6 +1395,29 @@ function fmtDue(due) {
   return parseKey(due).toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 const isOverdue = (due) => Boolean(due) && due < isoDate(new Date());
+const todosDueOn = (key) => todos.filter((t) => t.due === key);
+// To-do items whose due date lands in the current (Mon–Sun) week.
+function todosDueThisWeek() {
+  const monKey = weekKeyOf(new Date());
+  const mon = parseKey(monKey);
+  const sunKey = isoDate(new Date(mon.getFullYear(), mon.getMonth(), mon.getDate() + 6));
+  return todos
+    .filter((t) => t.due && t.due >= monKey && t.due <= sunKey)
+    .sort((a, b) => a.done - b.done || a.due.localeCompare(b.due) || a.quadrant - b.quadrant);
+}
+// Keep the calendar/home in sync after a to-do changes (they mirror to-do data).
+const isTabActive = (id) => $("#" + id).classList.contains("active");
+function renderHomeIfActive() {
+  if (isTabActive("tab-home")) renderHome();
+}
+function renderCalendarIfActive() {
+  if (isTabActive("tab-calendar")) renderCalendar();
+}
+function afterTodosChanged() {
+  renderTodo();
+  renderCalendarIfActive();
+  renderHomeIfActive();
+}
 function noteGlyph() {
   return `<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M4 11h16M4 16h10"/></svg>`;
 }
@@ -1415,7 +1445,7 @@ function todoRow(t) {
   cb.addEventListener("change", () => {
     t.done = cb.checked;
     saveTodos();
-    renderTodo();
+    afterTodosChanged();
   });
 
   const body = document.createElement("div");
@@ -1503,7 +1533,7 @@ function saveTodoEditor() {
     });
   }
   saveTodos();
-  renderTodo();
+  afterTodosChanged();
   dismissOverlays();
 }
 $("#todoEditorSave").addEventListener("click", saveTodoEditor);
@@ -1513,7 +1543,7 @@ $("#todoDeleteBtn").addEventListener("click", () => {
   if (!editingTodoId) return;
   todos = todos.filter((t) => t.id !== editingTodoId);
   saveTodos();
-  renderTodo();
+  afterTodosChanged();
   dismissOverlays();
 });
 document.addEventListener("keydown", (e) => {
@@ -1668,21 +1698,34 @@ function renderCalendar() {
       if (d.getMonth() !== month) cell.classList.add("other-month");
       if (key === todayKey) cell.classList.add("today");
 
-      const dayEvents = eventsOnDay(key);
-      const shown = dayEvents.slice(0, 3);
-      const more = dayEvents.length - shown.length;
+      // Events plus any to-do items due that day (the to-do↔calendar sync).
+      const chips = [
+        ...eventsOnDay(key).map(
+          (e) =>
+            `<div class="cal-event ${personClass(e.person)}">${personBubbles(e.person)}<span class="cal-event-title">${escapeHtml(e.title)}</span></div>`
+        ),
+        ...todosDueOn(key).map(
+          (t) =>
+            `<div class="cal-task q${t.quadrant}${t.done ? " done" : ""}" data-todo-id="${t.id}"><span class="q-dot q${t.quadrant}"></span><span class="cal-event-title">${escapeHtml(t.title)}</span></div>`
+        ),
+      ];
+      const shown = chips.slice(0, 3);
+      const more = chips.length - shown.length;
       cell.innerHTML = `
         <div class="cal-daynum">${d.getDate()}</div>
         <div class="cal-events">
-          ${shown
-            .map(
-              (e) =>
-                `<div class="cal-event ${personClass(e.person)}">${personBubbles(e.person)}<span class="cal-event-title">${escapeHtml(e.title)}</span></div>`
-            )
-            .join("")}
+          ${shown.join("")}
           ${more > 0 ? `<div class="cal-more">+${more} more</div>` : ""}
         </div>`;
       cell.addEventListener("click", () => openDayEditor(key));
+      // Tapping a task chip jumps straight to editing that to-do.
+      cell.querySelectorAll(".cal-task").forEach((el) => {
+        el.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          const t = todos.find((x) => x.id === el.dataset.todoId);
+          if (t) openTodoEditor(t.quadrant, t.id);
+        });
+      });
       row.appendChild(cell);
     }
     grid.appendChild(row);
@@ -1826,6 +1869,7 @@ function renderDayEvents() {
       saveEvents();
       renderDayEvents();
       renderCalendar();
+      renderHomeIfActive();
     });
     list.appendChild(row);
   });
@@ -1881,6 +1925,7 @@ $("#addEventForm").addEventListener("submit", (e) => {
   resetEventForm();
   renderDayEvents();
   renderCalendar();
+  renderHomeIfActive();
   $("#addEventTitle").focus();
 });
 $("#dayEditorClose").addEventListener("click", dismissOverlays);
@@ -1888,6 +1933,110 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && !$("#dayEditor").classList.contains("hidden")) dismissOverlays();
 });
 buildEventTimeOptions();
+
+// ============================================================
+//  Home (dashboard — the day's pertinent info in content-sized cards)
+// ============================================================
+function dashCard(title, countText) {
+  const card = document.createElement("div");
+  card.className = "dash-card";
+  card.innerHTML =
+    `<div class="dash-head"><h3>${escapeHtml(title)}</h3>` +
+    (countText ? `<span class="dash-count">${escapeHtml(String(countText))}</span>` : "") +
+    `</div><div class="dash-body"></div>`;
+  return card;
+}
+function dashEmpty(msg) {
+  const d = document.createElement("div");
+  d.className = "dash-empty";
+  d.textContent = msg;
+  return d;
+}
+
+function renderHome() {
+  const grid = $("#dashGrid");
+  if (!grid) return;
+  grid.innerHTML = "";
+  const todayKey = isoDate(new Date());
+  const weekKey = weekKeyOf(new Date());
+
+  // — This week's recipes (from the Planner) —
+  const dishes = weekDishes(weekKey);
+  {
+    const card = dashCard("This week's recipes", dishes.length || "");
+    const body = card.querySelector(".dash-body");
+    if (!dishes.length) body.appendChild(dashEmpty("No dishes planned this week."));
+    else
+      dishes.forEach((r) => {
+        const row = document.createElement("div");
+        row.className = "dash-row recipe-row";
+        row.innerHTML = `<img src="${r.image || placeholder()}" alt="" loading="lazy" /><span class="dash-row-title">${escapeHtml(r.title)}</span>`;
+        const img = row.querySelector("img");
+        img.onerror = () => (img.src = placeholder());
+        row.addEventListener("click", () => showRecipe(r.id));
+        body.appendChild(row);
+      });
+    grid.appendChild(card);
+  }
+
+  // — Today's calendar events —
+  const dayEvents = eventsOnDay(todayKey);
+  {
+    const card = dashCard("Today's events", dayEvents.length || "");
+    const body = card.querySelector(".dash-body");
+    if (!dayEvents.length) body.appendChild(dashEmpty("Nothing scheduled today."));
+    else
+      dayEvents.forEach((e) => {
+        const row = document.createElement("div");
+        row.className = "dash-row event-row-dash";
+        row.innerHTML =
+          `<span class="event-bubbles">${personBubbles(e.person)}</span>` +
+          (e.time ? `<span class="dash-time">${fmtTime(e.time)}</span>` : "") +
+          `<span class="dash-row-title">${escapeHtml(e.title)}</span>`;
+        row.addEventListener("click", () => openDayEditor(todayKey));
+        body.appendChild(row);
+      });
+    grid.appendChild(card);
+  }
+
+  // — To-dos due this week —
+  const dueTodos = todosDueThisWeek();
+  {
+    const card = dashCard("To-do this week", dueTodos.filter((t) => !t.done).length || "");
+    const body = card.querySelector(".dash-body");
+    if (!dueTodos.length) body.appendChild(dashEmpty("Nothing due this week."));
+    else
+      dueTodos.forEach((t) => {
+        const row = document.createElement("div");
+        row.className = "dash-row todo-row-dash" + (t.done ? " done" : "");
+        row.innerHTML =
+          `<span class="q-dot q${t.quadrant}"></span>` +
+          `<span class="dash-row-title">${escapeHtml(t.title)}</span>` +
+          `<span class="dash-due${isOverdue(t.due) && !t.done ? " overdue" : ""}">${fmtDue(t.due)}</span>`;
+        row.addEventListener("click", () => openTodoEditor(t.quadrant, t.id));
+        body.appendChild(row);
+      });
+    grid.appendChild(card);
+  }
+
+  // — Chores completed today (green = Andrew, rose = Katie) —
+  const doneToday = tracker.items
+    .map((it) => ({ it, a: personCount(it, "0", todayKey), k: personCount(it, "1", todayKey) }))
+    .filter((x) => x.a + x.k > 0);
+  {
+    const card = dashCard("Chores done today", doneToday.length || "");
+    const body = card.querySelector(".dash-body");
+    if (!doneToday.length) body.appendChild(dashEmpty("No chores logged today yet."));
+    else
+      doneToday.forEach(({ it, a, k }) => {
+        const row = document.createElement("div");
+        row.className = "dash-row chore-row-dash";
+        row.innerHTML = `<span class="dash-row-title">${escapeHtml(it.name)}</span><span class="dash-pips">${pipBoxes(a, k)}</span>`;
+        body.appendChild(row);
+      });
+    grid.appendChild(card);
+  }
+}
 
 // ============================================================
 //  Chores & habits (daily checklist, per-person, with streaks)
@@ -2544,7 +2693,8 @@ async function init() {
   updateNotesCount();
   updateTargetBanner();
   renderPlanner();
-  renderCalendar(); // Calendar is the default landing view
+  renderCalendar();
+  renderHome(); // Home dashboard is the default landing view
   try {
     const cfg = await (await fetch("/api/config")).json();
     if (!cfg.hasKey) $("#keyBanner").classList.remove("hidden");

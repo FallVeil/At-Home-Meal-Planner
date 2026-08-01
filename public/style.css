@@ -657,6 +657,60 @@ button { font-family: inherit; }
 .note-editor textarea:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
 .note-editor textarea::placeholder { color: var(--muted); }
 
+/* Home dashboard — two-column masonry of content-sized cards */
+.dash-grid { columns: 2; column-gap: 16px; }
+.dash-card {
+  break-inside: avoid;
+  -webkit-column-break-inside: avoid;
+  width: 100%;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 14px 16px;
+  margin: 0 0 16px;
+}
+.dash-head { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.dash-head h3 { margin: 0; font-family: var(--font-display); font-weight: 500; font-size: 1.1rem; }
+.dash-count {
+  margin-left: auto;
+  min-width: 22px;
+  text-align: center;
+  background: var(--accent);
+  color: #21341a;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 2px 8px;
+}
+.dash-body { display: flex; flex-direction: column; gap: 9px; }
+.dash-row { display: flex; align-items: center; gap: 10px; cursor: pointer; }
+.dash-row-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.92rem; }
+.dash-empty { color: var(--muted); font-size: 0.88rem; padding: 2px 0; }
+.recipe-row img { width: 36px; height: 36px; border-radius: 7px; object-fit: cover; background: #383b35; flex: none; }
+.dash-time { color: var(--accent); font-size: 0.8rem; font-weight: 600; flex: none; }
+.dash-due {
+  margin-left: auto;
+  font-size: 0.72rem;
+  color: var(--muted);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 1px 8px;
+  flex: none;
+  white-space: nowrap;
+}
+.dash-due.overdue { color: var(--danger); border-color: var(--danger); }
+.dash-row.done .dash-row-title { text-decoration: line-through; color: var(--muted); }
+.dash-pips { display: flex; align-items: center; gap: 3px; flex: none; }
+.dash-pips .pip { width: 10px; height: 10px; border-radius: 2px; }
+/* Small quadrant swatch — shared by dashboard to-do rows and calendar task chips. */
+.q-dot { width: 10px; height: 10px; border-radius: 3px; flex: none; }
+.q-dot.q1 { background: var(--q1); }
+.q-dot.q2 { background: var(--q2); }
+.q-dot.q3 { background: var(--q3); }
+.q-dot.q4 { background: var(--q4); }
+
 /* To-do (Eisenhower matrix) */
 .matrix-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .quad {
@@ -935,6 +989,26 @@ button { font-family: inherit; }
 .cal-event.p-k { background: rgba(207, 138, 85, 0.22); }
 .cal-event.p-both { background: rgba(166, 193, 153, 0.16); }
 .cal-more { font-size: 0.62rem; color: var(--muted); padding-left: 3px; }
+
+/* To-do items due on a day (the to-do↔calendar sync), tinted by quadrant. */
+.cal-task {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.68rem;
+  line-height: 1.25;
+  padding: 1px 4px;
+  border-radius: 5px;
+  white-space: nowrap;
+  overflow: hidden;
+  cursor: pointer;
+}
+.cal-task .q-dot { width: 8px; height: 8px; }
+.cal-task.q1 { background: rgba(207, 125, 114, 0.18); }
+.cal-task.q2 { background: rgba(210, 162, 78, 0.18); }
+.cal-task.q3 { background: rgba(111, 143, 202, 0.18); }
+.cal-task.q4 { background: rgba(98, 160, 120, 0.18); }
+.cal-task.done .cal-event-title { text-decoration: line-through; color: var(--muted); }
 
 /* Day detail / event editor (full-screen overlay) */
 .day-editor {
@@ -1382,6 +1456,9 @@ button { font-family: inherit; }
   .primary.big { width: 100%; }
   .modal { padding: 0; }
   .modal-card { max-height: 100vh; border-radius: 0; }
+
+  /* Dashboard: single column on phones. */
+  .dash-grid { columns: 1; }
 
   /* To-do matrix: keep two columns (the whole point), just tighten it up. */
   .matrix-grid { gap: 8px; }
