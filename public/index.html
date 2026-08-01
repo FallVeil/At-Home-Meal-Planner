@@ -32,7 +32,6 @@
         <button class="tab active" data-tab="plan">Planner</button>
         <button class="tab" data-tab="search">Find Recipes</button>
         <button class="tab" data-tab="grocery">Grocery List</button>
-        <button class="tab" data-tab="favorites">Favorites</button>
         <button class="tab" data-tab="notes">Notes</button>
         <button class="tab" data-tab="chores">Chores</button>
       </nav>
@@ -43,15 +42,25 @@
     </div>
 
     <main>
-      <!-- FIND RECIPES -->
+      <!-- FIND RECIPES (Favorites nested at the top of the category rail) -->
       <section id="tab-search" class="panel">
         <div class="search-layout">
           <aside class="cat-sidebar" id="categoryChips">
-            <button type="button" class="chip active" data-type="">All</button>
-            <button type="button" class="chip" data-type="appetizer">Appetizers</button>
-            <button type="button" class="chip" data-type="soup">Soups</button>
-            <button type="button" class="chip" data-type="salad">Salads</button>
-            <button type="button" class="chip" data-type="main course">Entrées</button>
+            <div id="recipeCats" class="cat-group">
+              <button type="button" class="chip fav-chip" data-view="favorites">★ Favorites</button>
+              <button type="button" class="chip active" data-type="">All</button>
+              <button type="button" class="chip" data-type="appetizer">Appetizers</button>
+              <button type="button" class="chip" data-type="soup">Soups</button>
+              <button type="button" class="chip" data-type="salad">Salads</button>
+              <button type="button" class="chip" data-type="main course">Entrées</button>
+            </div>
+            <div id="favCats" class="cat-group hidden">
+              <button type="button" class="chip back-chip" data-view="recipes">← Back</button>
+              <button type="button" class="chip active" data-cat="">All</button>
+              <button type="button" class="chip" data-cat="Breakfast">Breakfast</button>
+              <button type="button" class="chip" data-cat="Cold Lunch">Cold Lunch</button>
+              <button type="button" class="chip" data-cat="Freezer Meal">Freezer Meal</button>
+            </div>
           </aside>
           <div class="search-main">
             <form id="searchForm" class="search-bar">
@@ -69,9 +78,17 @@
               </button>
             </form>
             <div id="targetBanner" class="target-banner"></div>
-            <div id="staleNote" class="stale-note hidden"></div>
-            <div id="results" class="card-grid"></div>
-            <button id="loadMore" class="load-more hidden">Load more recipes</button>
+            <div id="recipeView">
+              <div id="staleNote" class="stale-note hidden"></div>
+              <div id="results" class="card-grid"></div>
+              <button id="loadMore" class="load-more hidden">Load more recipes</button>
+            </div>
+            <div id="favView" class="hidden">
+              <div id="favList" class="card-grid"></div>
+              <div id="favEmpty" class="empty">
+                No favorites yet. Tap the star on any recipe to save it here.
+              </div>
+            </div>
           </div>
         </div>
       </section>
@@ -119,18 +136,6 @@
         <div id="groceryList"></div>
         <div id="groceryEmpty" class="empty">
           Go to the <strong>Planner</strong>, add dishes to a week, then tap that week's <strong>List</strong>.
-        </div>
-      </section>
-
-      <!-- FAVORITES -->
-      <section id="tab-favorites" class="panel">
-        <div class="section-head">
-          <h2>Favorite recipes</h2>
-        </div>
-        <p class="hint">Your saved recipes. Tap <strong>Add to plan</strong> to drop one into the selected week.</p>
-        <div id="favList" class="card-grid"></div>
-        <div id="favEmpty" class="empty">
-          No favorites yet. Tap the star on any recipe to save it here.
         </div>
       </section>
 

@@ -60,6 +60,8 @@ function removeFromWeek(key, id) {
 
 // ---- Favorites (saved recipes, shown in their own tab) ----
 const FAV_KEY = "mealPlanner.favorites.v1";
+const FAV_CATS = ["Breakfast", "Cold Lunch", "Freezer Meal"];
+let favFilter = ""; // "" = All
 let favorites = loadFavorites();
 function loadFavorites() {
   try {
@@ -148,7 +150,7 @@ async function refreshFromServer() {
       localStorage.setItem(TRACKER_KEY, JSON.stringify(tracker));
     }
     if ($("#tab-plan").classList.contains("active")) renderPlanner();
-    if ($("#tab-favorites").classList.contains("active")) renderFavorites();
+    if (favViewActive()) renderFavorites();
     if ($("#tab-grocery").classList.contains("active") && groceryWeek) {
       renderGrocery(lastGroceryRecipes, groceryWeek);
     }
@@ -279,9 +281,9 @@ function activateTab(name) {
     renderPlanner();
     refreshFromServer();
   }
-  if (name === "search") updateTargetBanner();
-  if (name === "favorites") {
-    renderFavorites();
+  if (name === "search") {
+    updateTargetBanner();
+    if (favViewActive()) renderFavorites();
     refreshFromServer();
   }
   if (name === "grocery") {
@@ -310,19 +312,48 @@ document.addEventListener("visibilitychange", () => {
 // ============================================================
 $("#searchForm").addEventListener("submit", (e) => {
   e.preventDefault();
+  // Searching from the Favorites view returns to recipe results.
+  if (favViewActive()) showFavView(false);
   runSearch();
 });
 
-// Category chips.
-document.querySelectorAll("#categoryChips .chip").forEach((chip) => {
+// Recipe rail: category chips + a "★ Favorites" entry that swaps the rail to the
+// favorites categories.
+document.querySelectorAll("#recipeCats .chip").forEach((chip) => {
   chip.addEventListener("click", () => {
+    if (chip.dataset.view === "favorites") {
+      showFavView(true);
+      renderFavorites();
+      return;
+    }
+    document.querySelectorAll("#recipeCats .chip").forEach((c) => c.classList.toggle("active", c === chip));
+    showFavView(false);
     activeCategory = chip.dataset.type;
-    document
-      .querySelectorAll("#categoryChips .chip")
-      .forEach((c) => c.classList.toggle("active", c === chip));
     runSearch();
   });
 });
+// Favorites rail: "← Back" to recipes, plus the favorite-category filters.
+document.querySelectorAll("#favCats .chip").forEach((chip) => {
+  chip.addEventListener("click", () => {
+    if (chip.dataset.view === "recipes") {
+      showFavView(false);
+      return;
+    }
+    favFilter = chip.dataset.cat || "";
+    renderFavorites();
+  });
+});
+// Swap both the main content and the category rail between recipes and favorites.
+function showFavView(on) {
+  $("#favView").classList.toggle("hidden", !on);
+  $("#recipeView").classList.toggle("hidden", on);
+  $("#favCats").classList.toggle("hidden", !on);
+  $("#recipeCats").classList.toggle("hidden", on);
+}
+// True when the Favorites view is the one on screen inside Find Recipes.
+function favViewActive() {
+  return $("#tab-search").classList.contains("active") && !$("#favView").classList.contains("hidden");
+}
 
 // Snapshot of the active search so "load more" repeats the same filters.
 let currentSearch = null;
@@ -441,6 +472,7 @@ function updateTargetBanner() {
     targetWeek = e.target.value;
     updateTargetBanner();
     rerenderSearchResults();
+    if (favViewActive()) renderFavorites(); // update favourite cards' Add/Added state
   });
 }
 
@@ -523,26 +555,59 @@ function recipeCard(r, context, weekKey) {
     star.classList.toggle("on", nowFav);
     star.innerHTML = starIcon(nowFav);
     toast(nowFav ? `Favorited “${r.title}”` : `Unfavorited “${r.title}”`);
-    // On the Favorites tab, remove the card immediately when unfavorited.
-    if (!nowFav && $("#tab-favorites").classList.contains("active")) {
-      card.remove();
-      if (!favorites.length) renderFavorites();
-    }
+    // In the Favorites view, re-render so filters/empty-states stay correct.
+    if (!nowFav && favViewActive()) renderFavorites();
   });
   card.appendChild(star);
+
+  // On the Favorites tab, a menu to sort the recipe into a category.
+  if (context === "favorites") {
+    const wrap = document.createElement("div");
+    wrap.className = "fav-cat";
+    const sel = document.createElement("select");
+    sel.className = "fav-cat-select";
+    sel.setAttribute("aria-label", "Favorite category");
+    [["", "Uncategorized"], ...FAV_CATS.map((c) => [c, c])].forEach(([v, label]) => {
+      const o = document.createElement("option");
+      o.value = v;
+      o.textContent = label;
+      if ((r.favCategory || "") === v) o.selected = true;
+      sel.appendChild(o);
+    });
+    sel.addEventListener("change", () => {
+      if (sel.value) r.favCategory = sel.value;
+      else delete r.favCategory;
+      saveFavorites();
+      renderFavorites();
+    });
+    wrap.appendChild(sel);
+    card.querySelector(".card-body").appendChild(wrap);
+  }
 
   return card;
 }
 
+function syncFavChips() {
+  document
+    .querySelectorAll("#favCats .chip[data-cat]")
+    .forEach((c) => c.classList.toggle("active", (c.dataset.cat || "") === favFilter));
+}
+
 function renderFavorites() {
+  syncFavChips();
   const list = $("#favList");
   list.innerHTML = "";
-  if (!favorites.length) {
-    $("#favEmpty").classList.remove("hidden");
+  const shown = favorites.filter((r) => !favFilter || (r.favCategory || "") === favFilter);
+  if (!shown.length) {
+    const empty = $("#favEmpty");
+    empty.textContent = favorites.length
+      ? "No favorites in this category yet. Use the menu on a card to sort one here."
+      : "No favorites yet. Tap the star on any recipe to save it here.";
+    empty.classList.remove("hidden");
     return;
   }
   $("#favEmpty").classList.add("hidden");
-  favorites.forEach((r) => list.appendChild(recipeCard(r, "search")));
+  shown.forEach((r) => list.appendChild(recipeCard(r, "favorites")));
 }
 
 // ============================================================
@@ -630,6 +695,7 @@ let grocery = loadGrocery(); // { [weekKey]: { checked: {itemKey:true}, extras: 
 let lastGroceryRecipes = [];
 let groceryPushTimer = null;
 let staplesExpanded = false; // "Pantry staples" group collapsed by default
+const groceryCollapsed = new Set(); // collapsed aisle names (expanded by default)
 
 function loadGrocery() {
   try {
@@ -886,13 +952,24 @@ function renderGrocery(recipes, weekKey) {
     .sort((a, b) => (a === "Other" ? 1 : b === "Other" ? -1 : a.localeCompare(b)))
     .forEach((aisle) => {
       const group = byAisle[aisle];
+      const collapsed = groceryCollapsed.has(aisle);
+      const count = group.extras.length + group.items.length;
       const section = document.createElement("div");
-      section.className = "aisle";
-      section.innerHTML = `<h3>${escapeHtml(aisle)}</h3>`;
-      group.extras.forEach((row) => section.appendChild(extraRow(row.extra, row.origin, row.carried)));
+      section.className = "aisle" + (collapsed ? " collapsed" : "");
+      const header = document.createElement("h3");
+      header.className = "aisle-head";
+      header.innerHTML = `<span class="chev">${collapsed ? "▸" : "▾"}</span> ${escapeHtml(aisle)} <span class="aisle-count">${count}</span>`;
+      header.addEventListener("click", () => {
+        groceryCollapsed.has(aisle) ? groceryCollapsed.delete(aisle) : groceryCollapsed.add(aisle);
+        renderGrocery(lastGroceryRecipes, weekKey);
+      });
+      const itemsWrap = document.createElement("div");
+      itemsWrap.className = "aisle-items";
+      group.extras.forEach((row) => itemsWrap.appendChild(extraRow(row.extra, row.origin, row.carried)));
       group.items
         .sort((a, b) => a.name.localeCompare(b.name))
-        .forEach((item) => section.appendChild(groceryRow(item, weekKey)));
+        .forEach((item) => itemsWrap.appendChild(groceryRow(item, weekKey)));
+      section.append(header, itemsWrap);
       groceryList.appendChild(section);
     });
 
@@ -1558,20 +1635,20 @@ function renderHistory() {
 
   let head = "<thead>";
   if (isMonth) {
-    // Row 1: one label per week (its Monday). Row 2: each column's day-of-month.
-    head += `<tr><th class="hist-name-h" rowspan="2"></th>`;
+    // Row 1: one label per week (its Monday). Row 2 (sticky): weekday initials.
+    head += `<tr><th class="hist-name-h"></th>`;
     for (let w = 0; w < days.length / 7; w++) {
       const mon = days[w * 7];
       head += `<th class="hist-week" colspan="7">${MON[mon.getMonth()]} ${mon.getDate()}</th>`;
     }
-    head += `</tr><tr>`;
+    head += `</tr><tr class="sticky"><th class="hist-name-h"></th>`;
     days.forEach((d, i) => {
       const isToday = isoDate(d) === todayKey;
-      head += `<th class="hist-dnum${isToday ? " today" : ""}${i % 7 === 0 ? " week-start" : ""}">${d.getDate()}</th>`;
+      head += `<th class="hist-dnum${isToday ? " today" : ""}${i % 7 === 0 ? " week-start" : ""}">${WD[(d.getDay() + 6) % 7]}</th>`;
     });
     head += `</tr>`;
   } else {
-    head += `<tr><th class="hist-name-h"></th>`;
+    head += `<tr class="sticky"><th class="hist-name-h"></th>`;
     days.forEach((d) => {
       const isToday = isoDate(d) === todayKey;
       head += `<th class="hist-day${isToday ? " today" : ""}"><span class="wd">${WD[(d.getDay() + 6) % 7]}</span><span class="dn">${d.getDate()}</span></th>`;
@@ -1820,5 +1897,15 @@ async function init() {
   }
   maybeSeedChores(); // one-time: load the House Chores list if the tracker is empty
   runSearch(); // friendly starter results
+  setTopbarHeight();
 }
+
+// Track the sticky app-bar height so the history weekday row can sit just below it.
+function setTopbarHeight() {
+  const tb = document.querySelector(".topbar");
+  if (tb) document.documentElement.style.setProperty("--topbar-h", tb.offsetHeight + "px");
+}
+window.addEventListener("resize", setTopbarHeight);
+window.addEventListener("load", setTopbarHeight);
+
 init();

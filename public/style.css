@@ -11,6 +11,7 @@
   --green-dark: #457a55;
   --rose: #cf8b8f;
   --rose-ink: #42191c;
+  --katie: #cf8a55; /* warm muted orange (Katie's chore colour) — pairs with the sage green */
   --danger: #d17d76;
   --shadow: 0 2px 14px rgba(0, 0, 0, 0.28);
   --radius: 14px;
@@ -155,6 +156,26 @@ main { max-width: 1000px; margin: 0 auto; padding: 22px 20px 80px; }
 }
 .chip:hover { background: var(--bg); }
 .chip.active { background: var(--accent); color: #21341a; border-color: var(--accent); font-weight: 600; }
+/* The rail holds two swappable groups (recipe categories / favorite categories). */
+.cat-group { display: flex; flex-direction: column; gap: 8px; }
+/* "★ Favorites" and "← Back" sit apart from the list below them. */
+#categoryChips .fav-chip,
+#categoryChips .back-chip { margin-bottom: 12px; }
+#categoryChips .back-chip { color: var(--muted); }
+
+/* Favorites: per-card category menu */
+.fav-cat { margin-top: 10px; }
+.fav-cat-select {
+  width: 100%;
+  padding: 7px 9px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--ink);
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+.fav-cat-select:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
 
 /* "Adding to week X" banner on the search page */
 .target-banner {
@@ -659,8 +680,16 @@ button { font-family: inherit; }
 .chore-group.collapsed .chore-items { display: none; }
 
 /* Chore history grid */
-.history-wrap { overflow-x: auto; padding-bottom: 6px; }
+.history-wrap { padding-bottom: 6px; } /* fits the screen; no h-scroll so the header can stick */
 .hist-table { border-collapse: collapse; width: 100%; table-layout: fixed; }
+/* The weekday row hangs just under the app bar while the list scrolls. */
+.hist-table thead tr.sticky th {
+  position: sticky;
+  top: var(--topbar-h, 0px);
+  background: var(--bg);
+  z-index: 5;
+}
+.hist-table thead tr.sticky .hist-name-h { left: 0; z-index: 6; }
 .hist-table th, .hist-table td { padding: 3px; text-align: center; }
 .hist-name-h { width: 128px; }
 .hist-table.month .hist-name-h { width: 76px; }
@@ -689,9 +718,9 @@ button { font-family: inherit; }
 }
 .hist-dnum {
   color: var(--muted);
-  font-size: 0.5rem;
+  font-size: 0.48rem;
   font-weight: 400;
-  padding: 0 0 4px;
+  padding: 1px 0 4px;
   text-align: center;
 }
 .hist-dnum.today { color: var(--accent); font-weight: 600; }
@@ -724,8 +753,8 @@ button { font-family: inherit; }
 .hist-table.month .cell { max-width: 22px; border-radius: 3px; }
 .hist-cell.today .cell { border-color: var(--accent); } /* the "today" green outline stays */
 .hist-cell .cell.a { background: var(--green); }
-.hist-cell .cell.k { background: var(--rose); }
-.hist-cell .cell.both { background: linear-gradient(135deg, var(--green) 0 50%, var(--rose) 50% 100%); }
+.hist-cell .cell.k { background: var(--katie); }
+.hist-cell .cell.both { background: linear-gradient(135deg, var(--green) 0 50%, var(--katie) 50% 100%); }
 .cellnum { font-size: 0.74rem; font-weight: 700; color: #1a1b16; line-height: 1; }
 /* In a halved cell, each person's tally sits inside their own triangle. */
 .cell.both .cellnum { position: absolute; font-size: 0.6rem; }
@@ -736,7 +765,7 @@ button { font-family: inherit; }
 /* Filled squares used beside chore names on the checklist (green = Andrew, rose = Katie). */
 .pip { width: 6px; height: 6px; border-radius: 2px; background: var(--accent); }
 .pip.a { background: var(--green); }
-.pip.k { background: var(--rose); }
+.pip.k { background: var(--katie); }
 .pipn { font-size: 0.6rem; line-height: 1; color: var(--muted); margin-left: 1px; }
 .add-chore { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 18px; }
 .add-chore input {
@@ -808,7 +837,7 @@ button { font-family: inherit; }
 /* The A/K buttons are just the log control — the coloured boxes carry the "done"
    state — so the letter is tinted per person but the button no longer fills. */
 .pbtn.a { color: var(--green); }
-.pbtn.k { color: var(--rose); }
+.pbtn.k { color: var(--katie); }
 .pbtn:hover { border-color: currentColor; }
 .pbtn:active { transform: scale(0.92); }
 .chore-name { flex: 0 1 auto; min-width: 0; cursor: default; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -890,6 +919,11 @@ button { font-family: inherit; }
   border-bottom: 1px solid var(--line);
   padding-bottom: 5px;
 }
+.aisle-head { cursor: pointer; user-select: none; -webkit-user-select: none; display: flex; align-items: center; gap: 6px; }
+.aisle-head:hover { filter: brightness(1.15); }
+.aisle-head .chev { font-size: 0.72rem; }
+.aisle-count { color: var(--muted); font-weight: 400; font-size: 0.78rem; text-transform: none; letter-spacing: normal; margin-left: auto; }
+.aisle.collapsed .aisle-items { display: none; }
 .grocery-item {
   display: flex;
   align-items: baseline;
