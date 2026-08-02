@@ -1,0 +1,10 @@
+{
+  "appId": "com.homebase.app",
+  "appName": "Homebase",
+  "webDir": "public",
+  "server": {
+    "url": "https://at-home-meal-planner.onrender.com",
+    "androidScheme": "https",
+    "cleartext": false
+  }
+}
