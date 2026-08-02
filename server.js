@@ -2,6 +2,7 @@ import express from "express";
 import dotenv from "dotenv";
 import fs from "node:fs";
 import path from "node:path";
+import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
 
 dotenv.config();
@@ -58,6 +59,86 @@ const CATEGORY_FILTERS = {
 };
 
 app.use(express.json());
+
+// ---------------------------------------------------------------------------
+//  Household passcode gate
+//  One shared passcode (APP_PASSCODE) locks the whole app — pages AND every
+//  /api route — behind a signed, HttpOnly session cookie. No DB needed. When
+//  APP_PASSCODE isn't set the gate is OFF, so local/dev use still works; set it
+//  in Render to turn protection on. APP_SESSION_SECRET is optional (a random
+//  cookie-signing key); if absent it's derived from the passcode, so changing
+//  the passcode also invalidates old sessions.
+// ---------------------------------------------------------------------------
+app.set("trust proxy", 1); // Render terminates TLS at its proxy; trust X-Forwarded-*
+const PASSCODE = process.env.APP_PASSCODE || "";
+const AUTH_ON = Boolean(PASSCODE);
+const AUTH_SECRET =
+  process.env.APP_SESSION_SECRET ||
+  crypto.createHash("sha256").update(PASSCODE + "::homebase").digest("hex");
+const AUTH_COOKIE = "hb_auth";
+const AUTH_DAYS = 30;
+
+function authToken() {
+  const body = String(Date.now() + AUTH_DAYS * 86400000); // expiry timestamp
+  const sig = crypto.createHmac("sha256", AUTH_SECRET).update(body).digest("hex");
+  return `${body}.${sig}`;
+}
+function authValid(tok) {
+  if (!tok || !tok.includes(".")) return false;
+  const [body, sig] = tok.split(".");
+  const expect = crypto.createHmac("sha256", AUTH_SECRET).update(body).digest("hex");
+  const a = Buffer.from(sig);
+  const b = Buffer.from(expect);
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return false; // tamper check
+  return Number(body) > Date.now(); // not expired
+}
+function readCookie(req, name) {
+  const raw = req.headers.cookie || "";
+  for (const part of raw.split(";")) {
+    const i = part.indexOf("=");
+    if (i > -1 && part.slice(0, i).trim() === name) return decodeURIComponent(part.slice(i + 1));
+  }
+  return null;
+}
+// Reachable without a session: the login screen + assets, and the crawler files.
+// Everything else (app shell + all /api data) needs a valid cookie.
+const AUTH_PUBLIC = new Set(["/login", "/login.html", "/api/login", "/robots.txt", "/manifest.webmanifest"]);
+const authPublic = (p) => AUTH_PUBLIC.has(p) || p.startsWith("/icons/");
+
+// Ask crawlers not to index anything (defence-in-depth with robots.txt + auth).
+app.use((req, res, next) => {
+  res.setHeader("X-Robots-Tag", "noindex, nofollow");
+  next();
+});
+
+// Exchange the shared passcode for a session cookie. Timing-safe compare.
+app.post("/api/login", (req, res) => {
+  if (!AUTH_ON) return res.json({ ok: true });
+  const given = String(req.body?.passcode ?? "");
+  const a = Buffer.from(given);
+  const b = Buffer.from(PASSCODE);
+  const ok = a.length === b.length && crypto.timingSafeEqual(a, b);
+  if (!ok) return res.status(401).json({ error: "bad-passcode" });
+  const secure = req.secure ? "; Secure" : ""; // Secure only over HTTPS (Render); not on http://localhost
+  res.setHeader(
+    "Set-Cookie",
+    `${AUTH_COOKIE}=${authToken()}; Max-Age=${AUTH_DAYS * 86400}; Path=/; HttpOnly; SameSite=Lax${secure}`
+  );
+  res.json({ ok: true });
+});
+app.post("/api/logout", (req, res) => {
+  res.setHeader("Set-Cookie", `${AUTH_COOKIE}=; Max-Age=0; Path=/; HttpOnly; SameSite=Lax`);
+  res.json({ ok: true });
+});
+
+// The gate itself: block anything non-public without a valid session.
+app.use((req, res, next) => {
+  if (!AUTH_ON || authPublic(req.path)) return next();
+  if (authValid(readCookie(req, AUTH_COOKIE))) return next();
+  if (req.path.startsWith("/api/")) return res.status(401).json({ error: "auth-required" });
+  return res.status(401).sendFile(path.join(__dirname, "public", "login.html")); // show passcode screen
+});
+
 // "no-cache" = browsers may store files but must revalidate (via ETag) each load,
 // so updated CSS/JS always take effect after a deploy while unchanged files 304.
 app.use(

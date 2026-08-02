@@ -3249,4 +3249,14 @@ function setTopbarHeight() {
 window.addEventListener("resize", setTopbarHeight);
 window.addEventListener("load", setTopbarHeight);
 
+// Register the service worker so Homebase is installable and works offline.
+// Content stays fresh via the worker's network-first strategy, so no reload dance.
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("/service-worker.js").catch(() => {
+      /* SW unsupported or blocked — the app still works as a normal page */
+    });
+  });
+}
+
 init();
