@@ -312,25 +312,32 @@ document.querySelectorAll(".meal-nav .chip").forEach((chip) => {
 (function enableTabDragScroll() {
   const strip = document.querySelector(".tabs");
   if (!strip) return;
-  let down = false, startX = 0, startScroll = 0, moved = false;
+  let down = false, startX = 0, startScroll = 0, moved = false, captured = false, pid = null;
   strip.addEventListener("pointerdown", (e) => {
     if (e.pointerType !== "mouse") return;
     down = true;
     moved = false;
+    captured = false;
+    pid = e.pointerId;
     startX = e.clientX;
     startScroll = strip.scrollLeft;
-    strip.setPointerCapture(e.pointerId);
   });
   strip.addEventListener("pointermove", (e) => {
     if (!down) return;
     const dx = e.clientX - startX;
-    if (Math.abs(dx) > 4) moved = true;
-    strip.scrollLeft = startScroll - dx;
+    // Only start capturing/scrolling once it's clearly a drag, so a plain click
+    // still reaches the tab button and navigates.
+    if (Math.abs(dx) > 4) {
+      moved = true;
+      if (!captured) { try { strip.setPointerCapture(pid); captured = true; } catch {} }
+    }
+    if (moved) strip.scrollLeft = startScroll - dx;
   });
   const end = (e) => {
     if (!down) return;
     down = false;
-    try { strip.releasePointerCapture(e.pointerId); } catch {}
+    if (captured) { try { strip.releasePointerCapture(e.pointerId); } catch {} }
+    captured = false;
   };
   strip.addEventListener("pointerup", end);
   strip.addEventListener("pointercancel", end);
