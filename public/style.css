@@ -602,7 +602,21 @@ button { font-family: inherit; }
   margin-bottom: 12px;
   box-shadow: var(--shadow);
 }
-.note-text { white-space: pre-wrap; word-break: break-word; line-height: 1.55; cursor: text; }
+/* Long notes are clamped to ~a third of the screen with a fade, so one note
+   can't swallow the list; tapping still opens the full text in the editor. */
+.note-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.55;
+  cursor: text;
+  max-height: 33vh;
+  overflow: hidden;
+}
+.note-text.clamped {
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 30px), transparent);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 30px), transparent);
+}
+.note-more { font-size: 0.78rem; color: var(--accent); font-weight: 600; margin-top: 4px; }
 .note-edit {
   width: 100%;
   resize: vertical;
@@ -749,11 +763,8 @@ button { font-family: inherit; }
 .q4 .quad-label { color: var(--q4); }
 .quad-items { display: flex; flex-direction: column; gap: 3px; flex: 1; }
 .todo-item { display: flex; gap: 8px; align-items: flex-start; padding: 3px 2px; }
-.todo-check { width: 18px; height: 18px; margin-top: 2px; flex: none; cursor: pointer; }
-.q1 .todo-check { accent-color: var(--q1); }
-.q2 .todo-check { accent-color: var(--q2); }
-.q3 .todo-check { accent-color: var(--q3); }
-.q4 .todo-check { accent-color: var(--q4); }
+/* Green tick to match the chore checklist's "done" squares. */
+.todo-check { width: 18px; height: 18px; margin-top: 2px; flex: none; cursor: pointer; accent-color: var(--green); }
 .todo-body { flex: 1; min-width: 0; cursor: pointer; }
 .todo-title { font-size: 0.92rem; line-height: 1.28; }
 .todo-item.done .todo-title { text-decoration: line-through; color: var(--muted); }
@@ -1010,18 +1021,36 @@ button { font-family: inherit; }
 .cal-task.q4 { background: rgba(98, 160, 120, 0.18); }
 .cal-task.done .cal-event-title { text-decoration: line-through; color: var(--muted); }
 
-/* Day detail / event editor (full-screen overlay) */
+/* Day detail / event & to-do editor — a centred pop-up card (like recipes). */
 .day-editor {
   position: fixed;
   inset: 0;
   z-index: 60;
-  background: var(--bg);
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 18px;
+}
+.day-editor-card {
+  background: var(--card);
+  border-radius: var(--radius);
+  width: 100%;
+  max-width: 560px;
+  max-height: 88vh;
   display: flex;
   flex-direction: column;
-  padding: 14px;
-  gap: 14px;
+  overflow: hidden;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.35);
 }
-.day-editor-bar { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.day-editor-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 16px 18px 10px;
+  flex: none;
+}
 .day-editor-bar h2 {
   margin: 0;
   font-family: var(--font-display);
@@ -1031,7 +1060,7 @@ button { font-family: inherit; }
   flex: 1;
 }
 .bar-spacer { width: 64px; flex: none; }
-.day-editor-body { flex: 1; overflow-y: auto; width: 100%; max-width: 640px; margin: 0 auto; }
+.day-editor-body { flex: 1; overflow-y: auto; width: 100%; padding: 4px 18px 18px; }
 .event-row {
   display: flex;
   align-items: center;
@@ -1090,6 +1119,81 @@ button { font-family: inherit; }
   cursor: pointer;
 }
 .event-fields button:hover { background: var(--green-dark); }
+/* Small fixed-width emoji box (overrides the flexible text-input sizing above). */
+.event-fields input.emoji-box {
+  flex: 0 0 48px;
+  width: 48px;
+  text-align: center;
+  padding: 11px 4px;
+  font-size: 20px;
+}
+
+/* Recurrence row */
+.repeat-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.repeat-label { color: var(--muted); font-size: 0.82rem; font-weight: 600; flex: none; }
+.repeat-row select {
+  flex: 0 1 auto;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--card);
+  color: var(--ink);
+  font-size: 15px;
+  cursor: pointer;
+}
+.repeat-row select:focus,
+.repeat-row input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.repeat-row input {
+  flex: 1 1 110px;
+  min-width: 0;
+  padding: 9px 11px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--card);
+  color: var(--ink);
+  font-size: 16px;
+}
+.repeat-row input::placeholder { color: var(--muted); }
+
+/* Emoji quick-pick palette */
+.emoji-picks { display: flex; flex-wrap: wrap; gap: 6px; }
+.emoji-pick {
+  width: 34px;
+  height: 34px;
+  border: 1.5px solid var(--line);
+  border-radius: 8px;
+  background: transparent;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+.emoji-pick.none { color: var(--muted); font-size: 15px; }
+.emoji-pick:hover { border-color: var(--accent); }
+.emoji-pick.on { border-color: var(--accent); background: rgba(120, 160, 130, 0.16); }
+
+/* Emoji prefix before an event title */
+.ev-emoji { margin-right: 4px; }
+
+/* Recurrence caption under an event title in the day list */
+.event-repeat { display: block; font-size: 0.72rem; color: var(--muted); font-weight: 500; margin-top: 1px; }
+
+/* To-do rows shown in the day editor (the to-do↔calendar sync) */
+.day-todo-row { cursor: pointer; }
+.day-todo-row.done .event-title { text-decoration: line-through; color: var(--muted); }
+.day-todo-tag {
+  flex: none;
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: var(--muted);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  padding: 2px 7px;
+  border-radius: 999px;
+}
 
 /* Chores & habits */
 .chip-row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
@@ -1218,7 +1322,19 @@ button { font-family: inherit; }
 }
 .add-chore input::placeholder { color: var(--muted); }
 .add-chore input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.add-chore select {
+  min-width: 0;
+  padding: 11px 13px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--card);
+  color: var(--ink);
+  font-size: 16px;
+  cursor: pointer;
+}
+.add-chore select:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
 #addChoreCat { flex: 0 1 150px; }
+#addChoreCatNew { flex: 1 1 140px; }
 /* Chore name field: input with a small enter-icon submit button on its end. */
 .chore-name-field { flex: 1 1 200px; display: flex; align-items: stretch; min-width: 0; }
 .chore-name-field input {
@@ -1457,6 +1573,10 @@ button { font-family: inherit; }
   .modal { padding: 0; }
   .modal-card { max-height: 100vh; border-radius: 0; }
 
+  /* Keep the day/to-do editor a pop-up card (not a full screen) on phones too. */
+  .day-editor { padding: 10px; }
+  .day-editor-card { max-height: 92vh; }
+
   /* Dashboard: single column on phones. */
   .dash-grid { columns: 1; }
 
@@ -1468,19 +1588,33 @@ button { font-family: inherit; }
   .quad-label { font-size: 0.76rem; }
   .todo-title { font-size: 0.85rem; }
 
-  /* Calendar: compact month grid — events collapse to person-coloured bars. */
+  /* Calendar: compact month grid — small event labels, Google-Calendar style. */
   .cal-legend, .cal-weekdays, .cal-grid { padding-left: 30px; }
   .cal-weekdays { gap: 3px; }
   .cal-grid, .cal-week-row { gap: 3px; }
   .week-bubble { left: -26px; top: 6px; width: 21px; height: 21px; font-size: 0.74rem; }
   .cal-weekdays span { font-size: 0.6rem; }
-  .cal-day { min-height: 62px; padding: 3px; border-radius: 6px; }
+  .cal-day { min-height: 72px; padding: 3px; border-radius: 6px; }
   .cal-daynum { font-size: 0.7rem; padding: 0 2px; }
   .cal-day.today .cal-daynum { width: 19px; height: 19px; }
-  .cal-event { padding: 1px 2px; gap: 2px; }
-  .cal-event-title { display: none; }
-  .cal-event .pbubble { width: 12px; height: 12px; font-size: 0.46rem; }
-  .cal-more { font-size: 0.55rem; }
+  /* Give the title the room: hide the A/K bubble and lean on a coloured left
+     stripe + tinted bar for whose event it is (Google-Calendar style). */
+  .cal-event, .cal-task {
+    padding: 1px 3px; gap: 2px; font-size: 0.5rem; line-height: 1.25;
+    border-left: 3px solid transparent; border-radius: 0 4px 4px 0;
+  }
+  .cal-event-title { display: block; flex: 1; min-width: 0; }
+  .cal-event .pbubble { display: none; }
+  .cal-event.p-a { border-left-color: var(--green); }
+  .cal-event.p-k { border-left-color: var(--katie); }
+  .cal-event.p-both { border-left-color: var(--accent); }
+  .cal-task .q-dot { width: 5px; height: 5px; }
+  .cal-task.q1 { border-left-color: var(--q1); }
+  .cal-task.q2 { border-left-color: var(--q2); }
+  .cal-task.q3 { border-left-color: var(--q3); }
+  .cal-task.q4 { border-left-color: var(--q4); }
+  .cal-event .ev-emoji { margin-right: 2px; }
+  .cal-more { font-size: 0.52rem; }
 }
 
 /* One-column cards on very narrow phones. */

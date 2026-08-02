@@ -171,8 +171,8 @@
           <h2>Notes</h2>
         </div>
         <div class="chip-row" id="notesView">
-          <button type="button" class="chip active" data-view="notes">Quick notes</button>
-          <button type="button" class="chip" data-view="todo">To-do</button>
+          <button type="button" class="chip active" data-view="todo">To-do</button>
+          <button type="button" class="chip" data-view="notes">Quick notes</button>
         </div>
 
         <div id="quickNotes">
@@ -227,8 +227,8 @@
         </div>
         <div id="choreChecklist">
           <form id="addChoreForm" class="add-chore">
-            <input id="addChoreCat" type="text" list="choreCatList" placeholder="Room / category" autocomplete="off" />
-            <datalist id="choreCatList"></datalist>
+            <select id="addChoreCat" class="chore-cat-select" aria-label="Room / category"></select>
+            <input id="addChoreCatNew" type="text" class="hidden" placeholder="New room name" autocomplete="off" />
             <div class="chore-name-field">
               <input id="addChoreInput" type="text" placeholder="Add a chore or habit…" autocomplete="off" />
               <button type="submit" aria-label="Add chore">
@@ -275,6 +275,7 @@
 
     <!-- Day detail / event editor -->
     <div id="dayEditor" class="day-editor hidden">
+      <div class="day-editor-card">
       <div class="day-editor-bar">
         <button id="dayEditorClose" class="ghost">Close</button>
         <h2 id="dayEditorTitle"></h2>
@@ -290,6 +291,8 @@
             <button type="button" class="both-pick" data-p="both">Both</button>
           </div>
           <div class="event-fields">
+            <input id="eventEmoji" type="text" class="emoji-box" placeholder="🙂" maxlength="4"
+                   autocomplete="off" aria-label="Event emoji" />
             <input id="addEventTitle" type="text" placeholder="Add an event…" autocomplete="off" />
             <div class="time-pick">
               <select id="eventHour" aria-label="Hour"></select>
@@ -298,12 +301,27 @@
             </div>
             <button type="submit" id="addEventSubmit">Add</button>
           </div>
+          <div class="repeat-row">
+            <label class="repeat-label" for="eventRepeat">Repeat</label>
+            <select id="eventRepeat" aria-label="Repeat">
+              <option value="none">Does not repeat</option>
+              <option value="daily">Daily</option>
+              <option value="weekly">Weekly</option>
+              <option value="monthly">Monthly</option>
+              <option value="monthdays">Days of month…</option>
+            </select>
+            <input id="eventRepeatDays" type="text" inputmode="numeric" class="hidden"
+                   placeholder="e.g. 15, 30" autocomplete="off" aria-label="Days of month" />
+          </div>
+          <div class="emoji-picks" id="eventEmojiPicks"></div>
         </form>
+      </div>
       </div>
     </div>
 
     <!-- To-do item editor -->
     <div id="todoEditor" class="day-editor hidden">
+      <div class="day-editor-card">
       <div class="day-editor-bar">
         <button id="todoEditorCancel" class="ghost">Cancel</button>
         <h2 id="todoEditorTitle">New task</h2>
@@ -327,6 +345,7 @@
           <button type="button" id="todoDueClear" class="ghost">Clear</button>
         </div>
         <button type="button" id="todoDeleteBtn" class="ghost danger hidden">Delete task</button>
+      </div>
       </div>
     </div>
 

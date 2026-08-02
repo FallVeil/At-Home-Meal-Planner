@@ -1283,6 +1283,10 @@ function noteCard(note) {
   text.textContent = note.text;
   text.title = "Tap to edit";
   text.addEventListener("click", () => openNoteEditor(note));
+  // After it lays out, fade + flag any note tall enough to be clamped.
+  requestAnimationFrame(() => {
+    if (text.scrollHeight > text.clientHeight + 1) text.classList.add("clamped");
+  });
 
   const foot = document.createElement("div");
   foot.className = "note-foot";
@@ -1345,7 +1349,7 @@ document.addEventListener("keydown", (e) => {
 const TODOS_KEY = "mealPlanner.todos.v1";
 let todos = loadTodos();
 let todosPushTimer = null;
-let notesSubView = "notes"; // "notes" | "todo"
+let notesSubView = "todo"; // "notes" | "todo" — open on the To-do matrix first
 let editingTodoId = null;
 let todoQuadrant = 1; // quadrant selected in the editor
 
@@ -1538,6 +1542,10 @@ function saveTodoEditor() {
 }
 $("#todoEditorSave").addEventListener("click", saveTodoEditor);
 $("#todoEditorCancel").addEventListener("click", dismissOverlays);
+// Tapping the dimmed backdrop (outside the card) closes the pop-up.
+$("#todoEditor").addEventListener("click", (e) => {
+  if (e.target === $("#todoEditor")) dismissOverlays();
+});
 $("#todoDueClear").addEventListener("click", () => ($("#todoDueInput").value = ""));
 $("#todoDeleteBtn").addEventListener("click", () => {
   if (!editingTodoId) return;
@@ -1593,15 +1601,57 @@ const MONTHS_FULL = [
   "January", "February", "March", "April", "May", "June",
   "July", "August", "September", "October", "November", "December",
 ];
+// Does a (possibly recurring) event land on this day? A recurrence is anchored
+// at the event's own `date` and never fires before it.
+function occursOn(e, dateKey) {
+  const rep = e.repeat || "none";
+  if (rep === "none") return e.date === dateKey;
+  if (dateKey < e.date) return false;
+  const d = parseKey(dateKey);
+  const start = parseKey(e.date);
+  switch (rep) {
+    case "daily":
+      return true;
+    case "weekly":
+      return d.getDay() === start.getDay();
+    case "monthly":
+      return d.getDate() === start.getDate();
+    case "monthdays":
+      return Array.isArray(e.days) && e.days.includes(d.getDate());
+    default:
+      return e.date === dateKey;
+  }
+}
 // Events for a given day, sorted by time (untimed last), then title.
 function eventsOnDay(dateKey) {
   return events
-    .filter((e) => e.date === dateKey)
+    .filter((e) => occursOn(e, dateKey))
     .sort((a, b) => {
       const ta = a.time || "99:99";
       const tb = b.time || "99:99";
       return ta === tb ? (a.title || "").localeCompare(b.title || "") : ta.localeCompare(tb);
     });
+}
+// Human-readable summary of a recurrence rule, for chips/rows.
+const WEEKDAYS_FULL = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+function ordinal(n) {
+  const s = ["th", "st", "nd", "rd"];
+  const v = n % 100;
+  return n + (s[(v - 20) % 10] || s[v] || s[0]);
+}
+function repeatSummary(e) {
+  switch (e.repeat) {
+    case "daily":
+      return "Every day";
+    case "weekly":
+      return "Every " + WEEKDAYS_FULL[parseKey(e.date).getDay()];
+    case "monthly":
+      return "Monthly on the " + ordinal(parseKey(e.date).getDate());
+    case "monthdays":
+      return "Monthly on the " + (e.days || []).map(ordinal).join(" & ");
+    default:
+      return "";
+  }
 }
 // Small A/K "bubble(s)" matching the chores visual.
 function personBubbles(person) {
@@ -1656,6 +1706,72 @@ function setEventTime(t) {
   aSel.value = H < 12 ? "AM" : "PM";
 }
 
+// Recurrence controls. The "days of month" text box only shows for that mode.
+function syncRepeatDaysVisibility() {
+  const sel = $("#eventRepeat");
+  const box = $("#eventRepeatDays");
+  if (!sel || !box) return;
+  box.classList.toggle("hidden", sel.value !== "monthdays");
+}
+function setEventRepeat(repeat, days) {
+  const sel = $("#eventRepeat");
+  if (!sel) return;
+  sel.value = repeat && repeat !== "none" ? repeat : "none";
+  $("#eventRepeatDays").value = Array.isArray(days) ? days.join(", ") : "";
+  syncRepeatDaysVisibility();
+}
+// Parse the free-text "days of month" box into a sorted, de-duped 1–31 list.
+function parseMonthDays(str) {
+  const days = (str || "")
+    .split(/[\s,]+/)
+    .map((s) => parseInt(s, 10))
+    .filter((n) => Number.isInteger(n) && n >= 1 && n <= 31);
+  return [...new Set(days)].sort((a, b) => a - b);
+}
+// Read the repeat controls back into { repeat, days }.
+function getEventRepeat() {
+  const sel = $("#eventRepeat");
+  const repeat = sel ? sel.value : "none";
+  if (repeat === "monthdays") {
+    const days = parseMonthDays($("#eventRepeatDays").value);
+    // No valid days entered → treat as non-recurring rather than an empty rule.
+    return days.length ? { repeat, days } : { repeat: "none", days: [] };
+  }
+  return { repeat, days: [] };
+}
+
+// A single optional emoji shown before the event title. Quick-pick buttons fill
+// the box; the box itself also accepts any emoji from the keyboard.
+const EVENT_EMOJIS = ["🎤", "🎂", "💰", "🩺", "✈️", "🍽️", "🎉", "⚽", "💼", "🚗", "🏠", "❤️"];
+function buildEmojiPicker() {
+  const wrap = $("#eventEmojiPicks");
+  if (!wrap) return;
+  wrap.innerHTML =
+    `<button type="button" class="emoji-pick none" data-emoji="" aria-label="No emoji">∅</button>` +
+    EVENT_EMOJIS.map((e) => `<button type="button" class="emoji-pick" data-emoji="${e}">${e}</button>`).join("");
+  wrap.querySelectorAll(".emoji-pick").forEach((b) => {
+    b.addEventListener("click", () => setEventEmoji(b.dataset.emoji));
+  });
+}
+// Keep only the first emoji-like grapheme; ignore plain text typed in the box.
+function firstEmoji(str) {
+  if (!str) return "";
+  const chars = Array.from(str.trim());
+  const c = chars[0] || "";
+  return /\p{Extended_Pictographic}/u.test(c) ? c : "";
+}
+function setEventEmoji(emoji) {
+  const e = firstEmoji(emoji);
+  const box = $("#eventEmoji");
+  if (box) box.value = e;
+  document
+    .querySelectorAll("#eventEmojiPicks .emoji-pick")
+    .forEach((b) => b.classList.toggle("on", b.dataset.emoji === e));
+}
+function getEventEmoji() {
+  return firstEmoji($("#eventEmoji") ? $("#eventEmoji").value : "");
+}
+
 function renderCalendar() {
   const grid = $("#calGrid");
   if (!grid) return;
@@ -1702,7 +1818,7 @@ function renderCalendar() {
       const chips = [
         ...eventsOnDay(key).map(
           (e) =>
-            `<div class="cal-event ${personClass(e.person)}">${personBubbles(e.person)}<span class="cal-event-title">${escapeHtml(e.title)}</span></div>`
+            `<div class="cal-event ${personClass(e.person)}">${personBubbles(e.person)}<span class="cal-event-title">${e.emoji ? `<span class="ev-emoji">${e.emoji}</span>` : ""}${escapeHtml(e.title)}</span></div>`
         ),
         ...todosDueOn(key).map(
           (t) =>
@@ -1837,6 +1953,8 @@ function openDayEditor(dateKey) {
   });
   $("#addEventTitle").value = "";
   setEventTime("");
+  setEventRepeat("none");
+  setEventEmoji("");
   $("#addEventSubmit").textContent = "Add";
   renderDayEvents();
   $("#dayEditor").classList.remove("hidden");
@@ -1851,19 +1969,23 @@ function renderDayEvents() {
   const list = $("#dayEventList");
   list.innerHTML = "";
   const dayEvents = eventsOnDay(dayEditorDate);
-  $("#dayEventEmpty").classList.toggle("hidden", dayEvents.length > 0);
+  const dayTodos = todosDueOn(dayEditorDate);
+  $("#dayEventEmpty").classList.toggle("hidden", dayEvents.length + dayTodos.length > 0);
   dayEvents.forEach((e) => {
     const row = document.createElement("div");
     row.className = "event-row" + (e.id === editingEventId ? " editing" : "");
+    const rep = repeatSummary(e);
     row.innerHTML = `
       <span class="event-bubbles">${personBubbles(e.person)}</span>
       ${e.time ? `<span class="event-time">${fmtTime(e.time)}</span>` : ""}
-      <span class="event-title">${escapeHtml(e.title)}</span>
+      <span class="event-title">${e.emoji ? `<span class="ev-emoji">${e.emoji}</span>` : ""}${escapeHtml(e.title)}${rep ? `<span class="event-repeat">↻ ${escapeHtml(rep)}</span>` : ""}</span>
       <button class="event-del" aria-label="Delete event">✕</button>`;
     row.querySelector(".event-title").addEventListener("click", () => startEditEvent(e));
     row.querySelector(".event-bubbles").addEventListener("click", () => startEditEvent(e));
     row.querySelector(".event-del").addEventListener("click", (ev) => {
       ev.stopPropagation();
+      if (e.repeat && e.repeat !== "none" &&
+          !confirm("Delete this repeating event and all its occurrences?")) return;
       events = events.filter((x) => x.id !== e.id);
       if (editingEventId === e.id) resetEventForm();
       saveEvents();
@@ -1873,12 +1995,28 @@ function renderDayEvents() {
     });
     list.appendChild(row);
   });
+  // To-dos due this day (the to-do↔calendar sync) — tap to edit the task.
+  dayTodos.forEach((t) => {
+    const row = document.createElement("div");
+    row.className = "event-row day-todo-row" + (t.done ? " done" : "");
+    row.innerHTML = `
+      <span class="q-dot q${t.quadrant}"></span>
+      <span class="event-title">${escapeHtml(t.title)}</span>
+      <span class="day-todo-tag">To-do</span>`;
+    row.addEventListener("click", () => {
+      const todo = todos.find((x) => x.id === t.id);
+      if (todo) openTodoEditor(todo.quadrant, todo.id);
+    });
+    list.appendChild(row);
+  });
 }
 function startEditEvent(e) {
   editingEventId = e.id;
   setEventPerson(e.person);
   $("#addEventTitle").value = e.title;
   setEventTime(e.time || "");
+  setEventRepeat(e.repeat, e.days);
+  setEventEmoji(e.emoji || "");
   $("#addEventSubmit").textContent = "Save";
   renderDayEvents();
   $("#addEventTitle").focus();
@@ -1888,6 +2026,8 @@ function resetEventForm() {
   setEventPerson("0");
   $("#addEventTitle").value = "";
   setEventTime("");
+  setEventRepeat("none");
+  setEventEmoji("");
   $("#addEventSubmit").textContent = "Add";
 }
 function setEventPerson(p) {
@@ -1905,12 +2045,17 @@ $("#addEventForm").addEventListener("submit", (e) => {
   const title = $("#addEventTitle").value.trim();
   if (!title || !dayEditorDate) return;
   const time = getEventTime();
+  const { repeat, days } = getEventRepeat();
+  const emoji = getEventEmoji();
   if (editingEventId) {
     const ev = events.find((x) => x.id === editingEventId);
     if (ev) {
       ev.title = title;
       ev.person = eventPerson;
       ev.time = time;
+      ev.repeat = repeat;
+      ev.days = days;
+      ev.emoji = emoji;
     }
   } else {
     events.push({
@@ -1919,6 +2064,9 @@ $("#addEventForm").addEventListener("submit", (e) => {
       title,
       person: eventPerson,
       time,
+      repeat,
+      days,
+      emoji,
     });
   }
   saveEvents();
@@ -1929,10 +2077,17 @@ $("#addEventForm").addEventListener("submit", (e) => {
   $("#addEventTitle").focus();
 });
 $("#dayEditorClose").addEventListener("click", dismissOverlays);
+// Tapping the dimmed backdrop (outside the card) closes the pop-up.
+$("#dayEditor").addEventListener("click", (e) => {
+  if (e.target === $("#dayEditor")) dismissOverlays();
+});
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && !$("#dayEditor").classList.contains("hidden")) dismissOverlays();
 });
 buildEventTimeOptions();
+buildEmojiPicker();
+$("#eventRepeat").addEventListener("change", syncRepeatDaysVisibility);
+$("#eventEmoji").addEventListener("input", () => setEventEmoji($("#eventEmoji").value));
 
 // ============================================================
 //  Home (dashboard — the day's pertinent info in content-sized cards)
@@ -1992,7 +2147,7 @@ function renderHome() {
         row.innerHTML =
           `<span class="event-bubbles">${personBubbles(e.person)}</span>` +
           (e.time ? `<span class="dash-time">${fmtTime(e.time)}</span>` : "") +
-          `<span class="dash-row-title">${escapeHtml(e.title)}</span>`;
+          `<span class="dash-row-title">${e.emoji ? `<span class="ev-emoji">${e.emoji}</span>` : ""}${escapeHtml(e.title)}</span>`;
         row.addEventListener("click", () => openDayEditor(todayKey));
         body.appendChild(row);
       });
@@ -2271,13 +2426,26 @@ function choreCatSort(a, b) {
   return ra !== rb ? ra - rb : a.localeCompare(b);
 }
 function renderChoreCatOptions() {
-  const dl = $("#choreCatList");
-  if (!dl) return;
+  const sel = $("#addChoreCat");
+  if (!sel) return;
+  const prev = sel.value;
   const cats = [...new Set(tracker.items.map((it) => (it.category || "").trim()).filter(Boolean))];
   CHORE_CAT_ORDER.forEach((c) => {
     if (!cats.includes(c)) cats.push(c);
   });
-  dl.innerHTML = cats.map((c) => `<option value="${escapeHtml(c)}"></option>`).join("");
+  cats.sort(choreCatSort);
+  // A native <select> works reliably on mobile (unlike an <input list> datalist);
+  // the trailing option reveals a text box for a brand-new room.
+  sel.innerHTML =
+    cats.map((c) => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join("") +
+    `<option value="__new__">＋ New room…</option>`;
+  if (prev && prev !== "__new__" && cats.includes(prev)) sel.value = prev;
+  syncNewChoreCat();
+}
+// Show the "new room" text box only when "＋ New room…" is picked.
+function syncNewChoreCat() {
+  const isNew = $("#addChoreCat").value === "__new__";
+  $("#addChoreCatNew").classList.toggle("hidden", !isNew);
 }
 
 function renderActiveChoreView() {
@@ -2349,19 +2517,33 @@ function choreRow(item) {
   return row;
 }
 
+$("#addChoreCat").addEventListener("change", () => {
+  syncNewChoreCat();
+  if ($("#addChoreCat").value === "__new__") $("#addChoreCatNew").focus();
+});
 $("#addChoreForm").addEventListener("submit", (e) => {
   e.preventDefault();
   const input = $("#addChoreInput");
   const name = input.value.trim();
   if (!name) return;
+  const catSel = $("#addChoreCat");
+  const category =
+    catSel.value === "__new__" ? $("#addChoreCatNew").value.trim() : catSel.value.trim();
   tracker.items.push({
     id: Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
     name,
-    category: $("#addChoreCat").value.trim(),
+    category,
     done: { "0": {}, "1": {} },
   });
   saveTracker();
   input.value = ""; // keep the category so you can add several to the same room
+  // If a new room was just created, make it the selected option going forward.
+  if (catSel.value === "__new__" && category) {
+    renderChoreCatOptions();
+    catSel.value = category;
+    syncNewChoreCat();
+    $("#addChoreCatNew").value = "";
+  }
   renderChores();
   input.focus();
 });
