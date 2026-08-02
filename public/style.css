@@ -59,25 +59,58 @@ body::before {
   z-index: 1;
   margin: 0 0 12px;
   font-family: var(--font-display);
-  font-size: 1.5rem;
-  font-weight: 500;
+  font-size: 1.6rem;
+  font-weight: 600;
   letter-spacing: 0.005em;
+  text-align: center;
+}
+/* "Homebase" wordmark — the "o" is a magnifying-glass lens echoing the favicon.
+   Quiet version: the ring reads as a normal ink "o"; only the small sage handle
+   (dropping straight down, below the word, like the upright favicon) is the tell. */
+.wordmark { display: block; } /* full-width block so text-align:center works */
+.wordmark .lens {
+  display: inline-block;
+  box-sizing: border-box;
+  width: 0.62em;
+  height: 0.62em;
+  margin: 0 0.03em;
+  border: 0.11em solid var(--ink);
+  border-radius: 50%;
+  position: relative;
+  vertical-align: -0.02em;
+}
+.wordmark .lens::after { /* the magnifier's handle — straight down, the sage tell */
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 100%;
+  margin-left: -0.055em;
+  width: 0.11em;
+  height: 0.2em;
+  border-radius: 0.06em;
+  background: var(--accent);
 }
 .topbar .tabs { position: relative; z-index: 1; }
 .header-art {
   position: absolute;
-  top: 13px;
-  right: 12px;
-  height: clamp(34px, 6.5vw, 64px);
-  width: auto;
+  top: 4px;
+  left: 0;
+  right: 0;
+  width: 100%;
+  height: clamp(46px, 13vw, 78px);
   z-index: 0;
   pointer-events: none;
-  transform: rotate(-6deg);
-  transform-origin: center;
+  /* Symmetric garland spanning the header; faded out around the centred
+     wordmark so the lettering stays clear on both sides. */
+  -webkit-mask-image: linear-gradient(to right, #000 0, transparent 32%, transparent 68%, #000 100%);
+  mask-image: linear-gradient(to right, #000 0, transparent 32%, transparent 68%, #000 100%);
 }
-.header-art .stem { stroke: var(--accent); stroke-width: 2; stroke-linecap: round; fill: none; opacity: 0.42; }
-.header-art .leaf { fill: var(--accent); opacity: 0.26; }
-.header-art .vein { stroke: var(--accent); stroke-width: 0.6; fill: none; opacity: 0.4; }
+/* Autumn-mix garland: sage leaves woven with muted gold, terracotta berries. */
+.header-art .stem { stroke: var(--accent-dark); stroke-width: 2; stroke-linecap: round; fill: none; opacity: 0.62; }
+.header-art .leaf { fill: var(--accent); opacity: 0.6; }
+.header-art .leaf.alt { fill: #c79a57; } /* muted gold */
+.header-art .vein { stroke: var(--accent-dark); stroke-width: 0.6; fill: none; opacity: 0.42; }
+.header-art .berry { fill: var(--katie); opacity: 0.85; } /* terracotta (Katie's colour) */
 .tabs {
   display: flex;
   gap: 4px;
@@ -86,7 +119,9 @@ body::before {
   overflow-y: hidden;
   scrollbar-width: none;
   -ms-overflow-style: none;
+  cursor: grab; /* drag the strip to scroll through tabs on desktop */
 }
+.tabs:active { cursor: grabbing; }
 .tabs::-webkit-scrollbar { display: none; }
 .tab {
   border: none;
@@ -102,6 +137,20 @@ body::before {
 }
 .tab:hover { color: var(--ink); background: var(--bg); }
 .tab.active { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
+/* Home is just the app icon, pinned to the left so it stays visible while the
+   rest of the tabs scroll underneath it. */
+.tab-home {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  flex: none;
+  padding: 6px 10px 7px 0;
+  background: var(--card);
+  box-shadow: 8px 0 8px -6px rgba(0, 0, 0, 0.28);
+}
+.tab-home svg { display: block; width: 30px; height: 30px; border-radius: 8px; }
+.tab-home:hover { background: var(--card); }
+.tab-home.active { border-bottom-color: var(--accent); }
 .pill {
   display: inline-block;
   min-width: 20px;
@@ -686,18 +735,31 @@ button { font-family: inherit; }
 }
 .dash-head { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
 .dash-head h3 { margin: 0; font-family: var(--font-display); font-weight: 500; font-size: 1.1rem; }
-.dash-count {
-  margin-left: auto;
-  min-width: 22px;
-  text-align: center;
-  background: var(--accent);
-  color: #21341a;
-  border-radius: 999px;
-  font-size: 0.72rem;
-  font-weight: 700;
-  padding: 2px 8px;
-}
 .dash-body { display: flex; flex-direction: column; gap: 9px; }
+/* Home quick-add (grocery) */
+.dash-add { display: flex; gap: 8px; }
+.dash-add input {
+  flex: 1; min-width: 0; padding: 9px 11px; font-size: 16px;
+  border: 1px solid var(--line); border-radius: 10px; background: var(--card); color: var(--ink);
+}
+.dash-add input::placeholder { color: var(--muted); }
+.dash-add input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.dash-add button {
+  flex: none; background: var(--green); color: #fff; border: none;
+  padding: 9px 16px; border-radius: 10px; font-weight: 600; cursor: pointer;
+}
+.dash-add button:hover { background: var(--green-dark); }
+/* Low-profile shortcut link on a dashboard card */
+.dash-link {
+  align-self: flex-start; background: none; border: none; padding: 2px 0;
+  color: var(--muted); font-size: 0.85rem; cursor: pointer;
+}
+.dash-link:hover { color: var(--accent); }
+/* Subtle running total at the foot of a card (e.g. chores completed) */
+.dash-total {
+  margin-top: 4px; padding-top: 8px; border-top: 1px solid var(--line-faint);
+  color: var(--muted); font-size: 0.82rem; text-align: right;
+}
 .dash-row { display: flex; align-items: center; gap: 10px; cursor: pointer; }
 .dash-row-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.92rem; }
 .dash-empty { color: var(--muted); font-size: 0.88rem; padding: 2px 0; }
@@ -737,6 +799,9 @@ button { font-family: inherit; }
   min-height: 152px;
   box-shadow: var(--shadow);
 }
+/* The whole quadrant is a button: tap it to expand into the pop-up editor. */
+.quad { cursor: pointer; transition: border-color 0.15s ease; }
+.quad:hover { border-color: var(--accent); }
 .quad-head { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
 .quad-badge {
   display: inline-flex;
@@ -763,12 +828,32 @@ button { font-family: inherit; }
 .q4 .quad-label { color: var(--q4); }
 .quad-items { display: flex; flex-direction: column; gap: 3px; flex: 1; }
 .todo-item { display: flex; gap: 8px; align-items: flex-start; padding: 3px 2px; }
+/* Roomier rows with dividers inside the expanded quadrant pop-up. */
+#quadModalItems .todo-item { padding: 8px 2px; }
+#quadModalItems .todo-item + .todo-item { border-top: 1px solid var(--line); }
 /* Green tick to match the chore checklist's "done" squares. */
 .todo-check { width: 18px; height: 18px; margin-top: 2px; flex: none; cursor: pointer; accent-color: var(--green); }
 .todo-body { flex: 1; min-width: 0; cursor: pointer; }
 .todo-title { font-size: 0.92rem; line-height: 1.28; }
 .todo-item.done .todo-title { text-decoration: line-through; color: var(--muted); }
-.todo-meta { display: flex; align-items: center; gap: 6px; margin-top: 3px; }
+/* Show each task's notes right under its title; long notes fade out (like
+   Quick Notes) so one task can't swallow the list — tapping opens the full text. */
+.todo-note {
+  font-size: 0.8rem;
+  line-height: 1.35;
+  color: var(--muted);
+  margin-top: 2px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 4.05em;
+  overflow: hidden;
+}
+.todo-note.clamped {
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 16px), transparent);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 16px), transparent);
+}
+.todo-item.done .todo-note { text-decoration: line-through; }
+.todo-meta { display: flex; align-items: center; gap: 6px; margin-top: 4px; }
 .todo-due {
   font-size: 0.68rem;
   color: var(--muted);
@@ -780,6 +865,10 @@ button { font-family: inherit; }
 }
 .todo-due.overdue { color: var(--danger); border-color: var(--danger); }
 .todo-noteicon { color: var(--muted); display: inline-flex; align-items: center; }
+/* Expanded quadrant pop-up: header badge + full-width "Add task". */
+#quadModalTitle { display: flex; align-items: center; gap: 8px; font-size: 1.05rem; }
+#quadModalItems { margin-bottom: 14px; }
+#quadModalAdd { width: 100%; }
 .todo-top { display: flex; justify-content: flex-end; margin-bottom: 12px; }
 .todo-add-btn {
   background: var(--green);
@@ -1078,7 +1167,10 @@ button { font-family: inherit; }
 .event-title { flex: 1; min-width: 0; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .event-del { background: transparent; border: none; color: var(--muted); cursor: pointer; font-size: 0.95rem; padding: 2px 6px; flex: none; }
 .event-del:hover { color: var(--danger); }
-.add-event { margin-top: 16px; display: flex; flex-direction: column; gap: 12px; }
+/* "Add event" button that switches the day pop-up into the add/edit form. */
+.day-add-row { margin-top: 12px; display: flex; }
+.day-add-row .todo-add-btn { padding: 8px 18px; font-size: 0.9rem; }
+.add-event { margin-top: 4px; display: flex; flex-direction: column; gap: 12px; }
 .person-pick { display: flex; align-items: center; gap: 8px; }
 .person-pick .pbtn { width: 34px; height: 34px; font-size: 0.85rem; }
 .person-pick .pbtn.on.a { background: var(--green); color: #fff; border-color: var(--green); }
@@ -1119,14 +1211,24 @@ button { font-family: inherit; }
   cursor: pointer;
 }
 .event-fields button:hover { background: var(--green-dark); }
-/* Small fixed-width emoji box (overrides the flexible text-input sizing above). */
-.event-fields input.emoji-box {
+/* Small fixed-width emoji button that opens the searchable dropdown.
+   Higher specificity than `.event-fields button` so it isn't styled like Add. */
+.event-fields button.emoji-box {
   flex: 0 0 48px;
   width: 48px;
   text-align: center;
   padding: 11px 4px;
   font-size: 20px;
+  line-height: 1;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--card);
+  color: var(--ink);
+  font-weight: 400;
+  cursor: pointer;
 }
+.event-fields button.emoji-box:hover { background: var(--bg); }
+.event-fields button.emoji-box.empty { opacity: 0.55; } /* placeholder look, no emoji chosen */
 
 /* Recurrence row */
 .repeat-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
@@ -1155,8 +1257,36 @@ button { font-family: inherit; }
 }
 .repeat-row input::placeholder { color: var(--muted); }
 
-/* Emoji quick-pick palette */
-.emoji-picks { display: flex; flex-wrap: wrap; gap: 6px; }
+/* Searchable emoji dropdown (opened by the emoji button) */
+.emoji-picker {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--card);
+  padding: 10px;
+  box-shadow: var(--shadow);
+}
+.emoji-search {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg);
+  color: var(--ink);
+  font-size: 16px;
+  margin-bottom: 10px;
+}
+.emoji-search::placeholder { color: var(--muted); }
+.emoji-search:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.emoji-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(38px, 1fr));
+  gap: 6px;
+  max-height: 232px;
+  overflow-y: auto;
+}
+.emoji-grid .emoji-pick { width: 100%; }
+.emoji-empty { grid-column: 1 / -1; color: var(--muted); font-size: 0.85rem; padding: 8px 2px; }
 .emoji-pick {
   width: 34px;
   height: 34px;
@@ -1549,8 +1679,8 @@ button { font-family: inherit; }
 @media (max-width: 640px) {
   body { -webkit-text-size-adjust: 100%; }
   .topbar { padding: 9px 14px 0; }
-  .topbar h1 { font-size: 1.05rem; margin-bottom: 8px; }
-  .header-art { top: 8px; height: clamp(26px, 8vw, 40px); }
+  .topbar h1 { font-size: 1.35rem; margin-bottom: 8px; }
+  .header-art { top: 4px; height: clamp(42px, 12vw, 60px); }
   .tab { padding: 8px 12px; font-size: 0.9rem; }
   main { padding: 14px 14px 90px; }
 
@@ -1580,7 +1710,7 @@ button { font-family: inherit; }
   /* Dashboard: single column on phones. */
   .dash-grid { columns: 1; }
 
-  /* To-do matrix: keep two columns (the whole point), just tighten it up. */
+  /* To-do matrix: keep the 2x2 grid (tap a quadrant to expand it), just tighten it. */
   .matrix-grid { gap: 8px; }
   .quad { min-height: 132px; padding: 10px 9px 8px; }
   .quad-head { gap: 6px; margin-bottom: 8px; }
@@ -1620,11 +1750,6 @@ button { font-family: inherit; }
 /* One-column cards on very narrow phones. */
 @media (max-width: 380px) {
   .card-grid { grid-template-columns: 1fr; }
-}
-
-/* Very narrow phones: drop the header sprig so the title has room. */
-@media (max-width: 360px) {
-  .header-art { display: none; }
 }
 
 /* Fine film grain on the lighter card surfaces (placed last so it layers over

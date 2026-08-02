@@ -299,11 +299,54 @@ const results = $("#results");
 const weeksContainer = $("#weeksContainer");
 const groceryList = $("#groceryList");
 const groceryEmpty = $("#groceryEmpty");
-const groceryMeta = $("#groceryMeta");
 
 document.querySelectorAll(".tab").forEach((tab) => {
   tab.addEventListener("click", () => activateTab(tab.dataset.tab));
 });
+// Meal Planner sub-nav (Planner / Find Recipes / Grocery List), one row per panel.
+document.querySelectorAll(".meal-nav .chip").forEach((chip) => {
+  chip.addEventListener("click", () => activateTab(chip.dataset.mv));
+});
+
+// Drag-to-scroll the tab strip with a mouse (touch already scrolls natively).
+(function enableTabDragScroll() {
+  const strip = document.querySelector(".tabs");
+  if (!strip) return;
+  let down = false, startX = 0, startScroll = 0, moved = false;
+  strip.addEventListener("pointerdown", (e) => {
+    if (e.pointerType !== "mouse") return;
+    down = true;
+    moved = false;
+    startX = e.clientX;
+    startScroll = strip.scrollLeft;
+    strip.setPointerCapture(e.pointerId);
+  });
+  strip.addEventListener("pointermove", (e) => {
+    if (!down) return;
+    const dx = e.clientX - startX;
+    if (Math.abs(dx) > 4) moved = true;
+    strip.scrollLeft = startScroll - dx;
+  });
+  const end = (e) => {
+    if (!down) return;
+    down = false;
+    try { strip.releasePointerCapture(e.pointerId); } catch {}
+  };
+  strip.addEventListener("pointerup", end);
+  strip.addEventListener("pointercancel", end);
+  // Swallow the click that follows a real drag so it doesn't switch tabs.
+  strip.addEventListener(
+    "click",
+    (e) => {
+      if (moved) {
+        e.preventDefault();
+        e.stopPropagation();
+        moved = false;
+      }
+    },
+    true
+  );
+})();
 
 // ------------------------------------------------------------
 //  Back-button / in-app history
@@ -312,9 +355,22 @@ document.querySelectorAll(".tab").forEach((tab) => {
 //  leave it, so Back returns here first and only exits from home.
 // ------------------------------------------------------------
 const HOME_TAB = "home";
+const MEAL_VIEWS = ["plan", "search", "grocery"]; // sub-views under the "Meal Planner" tab
 let currentTab = HOME_TAB;
+let mealView = "plan"; // last-used Meal Planner sub-view
+
+// Sync the active state of the shared Meal Planner sub-nav (one chip-row per panel).
+function setMealView(mv) {
+  mealView = mv;
+  document
+    .querySelectorAll(".meal-nav .chip")
+    .forEach((b) => b.classList.toggle("active", b.dataset.mv === mv));
+}
 
 function activateTab(name, fromHistory = false) {
+  // "Meal Planner" is a group tab — open the last-used sub-view under it.
+  if (name === "mealplan") name = mealView || "plan";
+  const isMeal = MEAL_VIEWS.includes(name);
   if (!fromHistory) {
     const atHome = !history.state || history.state.tab === HOME_TAB;
     if (name === HOME_TAB) {
@@ -331,12 +387,14 @@ function activateTab(name, fromHistory = false) {
     }
   }
   currentTab = name;
+  const topTab = isMeal ? "mealplan" : name; // group meal sub-views under one tab
   document
     .querySelectorAll(".tab")
-    .forEach((t) => t.classList.toggle("active", t.dataset.tab === name));
+    .forEach((t) => t.classList.toggle("active", t.dataset.tab === topTab));
   document
     .querySelectorAll(".panel")
     .forEach((p) => p.classList.toggle("active", p.id === `tab-${name}`));
+  if (isMeal) setMealView(name);
   if (name === "home") {
     renderHome();
     refreshFromServer();
@@ -376,14 +434,22 @@ function anyOverlayOpen() {
     !$("#modal").classList.contains("hidden") ||
     !$("#noteEditor").classList.contains("hidden") ||
     !$("#dayEditor").classList.contains("hidden") ||
+    !$("#quadModal").classList.contains("hidden") ||
     !$("#todoEditor").classList.contains("hidden")
   );
 }
+// Close only the top-most overlay. Overlays can stack — e.g. the quadrant
+// pop-up with a task editor on top — and each has its own history entry, so a
+// single Back peels off one layer at a time. Order = top of the stack first.
 function closeOpenOverlays() {
-  if (!$("#modal").classList.contains("hidden")) closeModal();
-  if (!$("#noteEditor").classList.contains("hidden")) closeNoteEditor();
-  if (!$("#dayEditor").classList.contains("hidden")) closeDayEditor();
-  if (!$("#todoEditor").classList.contains("hidden")) closeTodoEditor();
+  if (!$("#todoEditor").classList.contains("hidden")) return closeTodoEditor();
+  if (!$("#noteEditor").classList.contains("hidden")) return closeNoteEditor();
+  // The day pop-up peels form → list before it closes.
+  if (!$("#dayEditor").classList.contains("hidden") && dayEditorMode === "form")
+    return setDayEditorMode("list");
+  if (!$("#dayEditor").classList.contains("hidden")) return closeDayEditor();
+  if (!$("#quadModal").classList.contains("hidden")) return closeQuadModal();
+  if (!$("#modal").classList.contains("hidden")) return closeModal();
 }
 // Opening an overlay pushes a history entry (see showRecipe / openNoteEditor) so
 // Back closes it. Interactive closes unwind that entry; popstate does the rest.
@@ -990,7 +1056,6 @@ async function loadGroceryWeek(weekKey) {
   }
   $("#groceryControls").classList.add("hidden");
   groceryList.innerHTML = `<div class="loading"><div class="spinner"></div>Building your grocery list…</div>`;
-  groceryMeta.textContent = "";
   try {
     const ids = dishes.map((r) => r.id).join(",");
     const res = await fetch(`/api/recipes?ids=${encodeURIComponent(ids)}`);
@@ -1101,13 +1166,6 @@ function renderGrocery(recipes, weekKey) {
   if (!groceryList.children.length) {
     groceryList.innerHTML = `<div class="empty">No items to buy — add your own above.</div>`;
   }
-
-  const weekLabel = isThisWeek(weekKey) ? "this week" : `week of ${fmtRange(parseKey(weekKey))}`;
-  const toBuy = combined.size - staplesList.length;
-  const staplesNote = staplesList.length
-    ? ` · ${staplesList.length} pantry staple${staplesList.length === 1 ? "" : "s"}`
-    : "";
-  groceryMeta.textContent = `${weekLabel} — ${toBuy} item${toBuy === 1 ? "" : "s"} for ${recipes.length} dish${recipes.length === 1 ? "" : "es"}${staplesNote}. Tap an item to check it off.`;
 }
 
 function groceryRow(item, weekKey) {
@@ -1184,20 +1242,30 @@ function extraRow(extra, originWeek, carried) {
 }
 
 // Add-your-own-item + hide-staples controls.
-$("#addItemForm").addEventListener("submit", (e) => {
-  e.preventDefault();
-  const input = $("#addItemInput");
-  const name = input.value.trim();
-  if (!name || !groceryWeek) return;
-  weekGrocery(groceryWeek).extras.push({
+// Manual grocery items always land in THIS week's list (from the grocery page
+// or the Home quick-add card), so nothing gets stranded on a future week.
+function addGroceryItem(name) {
+  name = (name || "").trim();
+  if (!name) return false;
+  const wk = weekKeyOf(new Date());
+  weekGrocery(wk).extras.push({
     id: Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
     name,
     checked: false,
     aisle: categorizeItem(name),
   });
   saveGrocery();
+  return true;
+}
+$("#addItemForm").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const input = $("#addItemInput");
+  if (!addGroceryItem(input.value)) return;
   input.value = "";
-  renderGrocery(lastGroceryRecipes, groceryWeek);
+  const wk = weekKeyOf(new Date());
+  // Show this week so the new item is visible (jump there if viewing another week).
+  if (groceryWeek === wk) renderGrocery(lastGroceryRecipes, wk);
+  else loadGroceryWeek(wk);
 });
 
 $("#copyList").addEventListener("click", () => {
@@ -1400,13 +1468,14 @@ function fmtDue(due) {
 }
 const isOverdue = (due) => Boolean(due) && due < isoDate(new Date());
 const todosDueOn = (key) => todos.filter((t) => t.due === key);
-// To-do items whose due date lands in the current (Mon–Sun) week.
-function todosDueThisWeek() {
-  const monKey = weekKeyOf(new Date());
-  const mon = parseKey(monKey);
-  const sunKey = isoDate(new Date(mon.getFullYear(), mon.getMonth(), mon.getDate() + 6));
+// To-do items due within the rolling next 7 days (today through today+6), so
+// something happening tomorrow shows up even if a calendar week just rolled over.
+function todosDueNext7Days() {
+  const today = new Date();
+  const startKey = isoDate(today);
+  const endKey = isoDate(new Date(today.getFullYear(), today.getMonth(), today.getDate() + 6));
   return todos
-    .filter((t) => t.due && t.due >= monKey && t.due <= sunKey)
+    .filter((t) => t.due && t.due >= startKey && t.due <= endKey)
     .sort((a, b) => a.done - b.done || a.due.localeCompare(b.due) || a.quadrant - b.quadrant);
 }
 // Keep the calendar/home in sync after a to-do changes (they mirror to-do data).
@@ -1419,28 +1488,39 @@ function renderCalendarIfActive() {
 }
 function afterTodosChanged() {
   renderTodo();
+  renderQuadModalIfOpen();
   renderCalendarIfActive();
   renderHomeIfActive();
 }
-function noteGlyph() {
-  return `<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M4 11h16M4 16h10"/></svg>`;
-}
+const QUAD_LABELS = {
+  1: "Urgent & Important",
+  2: "Not Urgent & Important",
+  3: "Urgent & Unimportant",
+  4: "Not Urgent & Unimportant",
+};
+const QUAD_ROMAN = { 1: "I", 2: "II", 3: "III", 4: "IV" };
+const quadTodos = (q) =>
+  todos
+    .filter((t) => t.quadrant === q)
+    .sort((a, b) => a.done - b.done || (a.ts || 0) - (b.ts || 0));
 
+// The 2x2 grid shows a compact preview of each quadrant; tapping the quadrant
+// opens the pop-up where tasks are added and edited.
 function renderTodo() {
   [1, 2, 3, 4].forEach((q) => {
     const wrap = $("#quadItems" + q);
     if (!wrap) return;
     wrap.innerHTML = "";
-    todos
-      .filter((t) => t.quadrant === q)
-      .sort((a, b) => a.done - b.done || (a.ts || 0) - (b.ts || 0))
-      .forEach((t) => wrap.appendChild(todoRow(t)));
+    quadTodos(q).forEach((t) => wrap.appendChild(todoPreviewRow(t)));
   });
 }
 
-function todoRow(t) {
-  const row = document.createElement("div");
-  row.className = "todo-item" + (t.done ? " done" : "");
+function noteGlyph() {
+  return `<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M4 11h16M4 16h10"/></svg>`;
+}
+
+// Shared checkbox: toggles done and stops the tap from bubbling to the quad.
+function todoCheck(t) {
   const cb = document.createElement("input");
   cb.type = "checkbox";
   cb.className = "todo-check";
@@ -1451,7 +1531,14 @@ function todoRow(t) {
     saveTodos();
     afterTodosChanged();
   });
+  return cb;
+}
 
+// Compact grid row: title + due chip + a note indicator. No per-row click —
+// taps bubble up to the quadrant, which opens the pop-up.
+function todoPreviewRow(t) {
+  const row = document.createElement("div");
+  row.className = "todo-item" + (t.done ? " done" : "");
   const body = document.createElement("div");
   body.className = "todo-body";
   const title = document.createElement("div");
@@ -1476,10 +1563,91 @@ function todoRow(t) {
     }
     body.appendChild(meta);
   }
-  body.addEventListener("click", () => openTodoEditor(t.quadrant, t.id));
-  row.append(cb, body);
+  row.append(todoCheck(t), body);
   return row;
 }
+
+// Full row for the quadrant pop-up: title + notes (faded if long) + due.
+// Tapping the body opens the task editor.
+function todoRow(t) {
+  const row = document.createElement("div");
+  row.className = "todo-item" + (t.done ? " done" : "");
+  const body = document.createElement("div");
+  body.className = "todo-body";
+  const title = document.createElement("div");
+  title.className = "todo-title";
+  title.textContent = t.title;
+  body.appendChild(title);
+  if (t.note) {
+    const note = document.createElement("div");
+    note.className = "todo-note";
+    note.textContent = t.note;
+    // After layout, fade any note too long to fit (tap opens the full text).
+    requestAnimationFrame(() => {
+      if (note.scrollHeight > note.clientHeight + 1) note.classList.add("clamped");
+    });
+    body.appendChild(note);
+  }
+  if (t.due) {
+    const meta = document.createElement("div");
+    meta.className = "todo-meta";
+    const due = document.createElement("span");
+    due.className = "todo-due" + (isOverdue(t.due) && !t.done ? " overdue" : "");
+    due.textContent = fmtDue(t.due);
+    meta.appendChild(due);
+    body.appendChild(meta);
+  }
+  body.addEventListener("click", () => openTodoEditor(t.quadrant, t.id));
+  row.append(todoCheck(t), body);
+  return row;
+}
+
+// ---- Expanded quadrant pop-up ----
+let openQuadModalQ = null; // which quadrant the pop-up is showing (null = closed)
+function openQuadModal(q) {
+  openQuadModalQ = q;
+  $("#quadModal .day-editor-card").className = "day-editor-card q" + q;
+  $("#quadModalTitle").innerHTML =
+    `<span class="quad-badge">${QUAD_ROMAN[q]}</span><span>${QUAD_LABELS[q]}</span>`;
+  renderQuadModal();
+  $("#quadModal").classList.remove("hidden");
+  pushOverlayState(); // Back closes the pop-up rather than the app
+}
+function closeQuadModal() {
+  $("#quadModal").classList.add("hidden");
+  openQuadModalQ = null;
+}
+function renderQuadModal() {
+  if (openQuadModalQ == null) return;
+  const wrap = $("#quadModalItems");
+  wrap.innerHTML = "";
+  const items = quadTodos(openQuadModalQ);
+  items.forEach((t) => wrap.appendChild(todoRow(t)));
+  $("#quadModalEmpty").classList.toggle("hidden", items.length > 0);
+}
+function renderQuadModalIfOpen() {
+  if (openQuadModalQ != null && !$("#quadModal").classList.contains("hidden")) renderQuadModal();
+}
+// Tap a quadrant to expand it; the task editor stacks on top of the pop-up.
+document.querySelectorAll(".matrix-grid .quad").forEach((el) => {
+  el.addEventListener("click", () => openQuadModal(Number(el.dataset.q)));
+});
+$("#quadModalAdd").addEventListener("click", () => openTodoEditor(openQuadModalQ || 1));
+$("#quadModalClose").addEventListener("click", dismissOverlays);
+$("#quadModal").addEventListener("click", (e) => {
+  if (e.target === $("#quadModal")) dismissOverlays();
+});
+// Escape closes the pop-up — but only when the task editor isn't stacked on top
+// of it (that editor has its own Escape handler), so one press peels one layer.
+document.addEventListener("keydown", (e) => {
+  if (
+    e.key === "Escape" &&
+    !$("#quadModal").classList.contains("hidden") &&
+    $("#todoEditor").classList.contains("hidden")
+  ) {
+    dismissOverlays();
+  }
+});
 
 // One "Add task" bubble at the top opens the editor, defaulting to the last
 // quadrant used (the editor's quadrant picker lets you place it anywhere).
@@ -1567,6 +1735,7 @@ let events = loadEvents();
 let eventsPushTimer = null;
 let calMonth = startOfMonth(new Date()); // first of the month currently on screen
 let dayEditorDate = null; // which day the editor is open for
+let dayEditorMode = "list"; // "list" (events + Add button) | "form" (add/edit prompts)
 let editingEventId = null; // event being edited (null = adding new)
 let eventPerson = "0"; // selected person in the add/edit form
 
@@ -1742,34 +1911,148 @@ function getEventRepeat() {
 
 // A single optional emoji shown before the event title. Quick-pick buttons fill
 // the box; the box itself also accepts any emoji from the keyboard.
-const EVENT_EMOJIS = ["🎤", "🎂", "💰", "🩺", "✈️", "🍽️", "🎉", "⚽", "💼", "🚗", "🏠", "❤️"];
-function buildEmojiPicker() {
-  const wrap = $("#eventEmojiPicks");
-  if (!wrap) return;
-  wrap.innerHTML =
-    `<button type="button" class="emoji-pick none" data-emoji="" aria-label="No emoji">∅</button>` +
-    EVENT_EMOJIS.map((e) => `<button type="button" class="emoji-pick" data-emoji="${e}">${e}</button>`).join("");
-  wrap.querySelectorAll(".emoji-pick").forEach((b) => {
-    b.addEventListener("click", () => setEventEmoji(b.dataset.emoji));
-  });
-}
-// Keep only the first emoji-like grapheme; ignore plain text typed in the box.
+// Searchable emoji set — each entry is [emoji, "space separated keywords"].
+// Broad but curated: enough to cover everyday events without shipping a huge DB.
+const EMOJI_DATA = [
+  ["🙂", "smile happy face"], ["😀", "grin happy smile"], ["😍", "love heart eyes"],
+  ["😎", "cool sunglasses"], ["🥳", "party celebrate hooray"], ["😴", "sleep tired rest nap"],
+  ["🤒", "sick ill fever unwell"], ["🤕", "hurt injured bandage"], ["😢", "sad cry"],
+  ["😡", "angry mad"], ["🎉", "party celebrate tada"], ["🎊", "party confetti celebrate"],
+  ["🎂", "birthday cake"], ["🍰", "cake dessert slice"], ["🧁", "cupcake dessert"],
+  ["🎁", "gift present birthday"], ["🎈", "balloon party"], ["🎀", "bow ribbon gift"],
+  ["❤️", "love heart"], ["💛", "yellow heart love"], ["💍", "ring engagement wedding marry"],
+  ["💐", "flowers bouquet"], ["🌹", "rose flower love"], ["🌸", "flower blossom spring"],
+  ["🎓", "graduation school grad diploma"], ["🏫", "school building"], ["📚", "books study read school"],
+  ["✏️", "pencil write school"], ["📝", "note memo write exam test"], ["🧪", "science lab test"],
+  ["💼", "work job briefcase business office"], ["🏢", "office building work"], ["💻", "laptop computer work"],
+  ["📞", "phone call"], ["📱", "phone mobile"], ["📧", "email mail message"],
+  ["📅", "calendar date schedule appointment"], ["📆", "calendar date"], ["⏰", "alarm clock time reminder"],
+  ["🕐", "clock time"], ["💰", "money cash pay salary payday"], ["💵", "money cash dollar bill"],
+  ["💳", "card credit pay bill"], ["🧾", "receipt bill invoice"], ["🏦", "bank money"],
+  ["🩺", "doctor health medical checkup stethoscope"], ["💊", "medicine pill health pharmacy"],
+  ["💉", "shot vaccine injection needle"], ["🦷", "tooth dentist teeth"], ["🏥", "hospital medical"],
+  ["🧠", "brain mind therapy mental"], ["🧘", "yoga meditate calm relax"], ["🏋️", "gym workout exercise lift"],
+  ["🏃", "run running jog exercise"], ["🚴", "bike cycling ride"], ["⚽", "soccer football sport"],
+  ["🏀", "basketball sport"], ["🏈", "football sport"], ["⚾", "baseball sport"],
+  ["🎾", "tennis sport"], ["🏐", "volleyball sport"], ["🏓", "ping pong table tennis"],
+  ["🏊", "swim swimming pool"], ["⛳", "golf sport"], ["🎳", "bowling"],
+  ["🥎", "softball sport"], ["🏒", "hockey sport"], ["🎿", "ski skiing snow"],
+  ["🏂", "snowboard snow"], ["🛹", "skateboard"], ["🎣", "fishing fish"],
+  ["🎯", "target darts goal"], ["🎮", "game gaming video controller"], ["🎲", "dice game board"],
+  ["♟️", "chess game strategy"], ["🎨", "art paint craft hobby"], ["🖌️", "paint brush art"],
+  ["🎭", "theater drama play show"], ["🎬", "movie film cinema"], ["🎥", "movie camera film"],
+  ["📺", "tv television show"], ["🎤", "sing karaoke concert mic music"], ["🎧", "music headphones listen"],
+  ["🎵", "music note song"], ["🎶", "music notes song"], ["🎸", "guitar music band"],
+  ["🎹", "piano music keyboard"], ["🥁", "drums music band"], ["🎺", "trumpet music"],
+  ["🎻", "violin music"], ["🍽️", "dinner meal restaurant food eat"], ["🍴", "food eat meal"],
+  ["🍕", "pizza food"], ["🍔", "burger food"], ["🌮", "taco food mexican"],
+  ["🍜", "noodles ramen food"], ["🍣", "sushi food japanese"], ["🥗", "salad healthy food"],
+  ["🍦", "ice cream dessert"], ["🍩", "donut dessert"], ["🍪", "cookie dessert"],
+  ["☕", "coffee cafe drink"], ["🍵", "tea drink"], ["🍺", "beer drink bar"],
+  ["🍷", "wine drink"], ["🍸", "cocktail drink bar"], ["🥂", "cheers toast celebrate champagne"],
+  ["🍳", "cook breakfast egg food"], ["🥘", "cooking food meal"], ["🛒", "shopping groceries cart store"],
+  ["🛍️", "shopping bags store mall"], ["🎄", "christmas holiday xmas tree"], ["🎃", "halloween pumpkin"],
+  ["🦃", "thanksgiving turkey"], ["🧨", "firework new year celebrate"], ["🎆", "fireworks celebrate new year"],
+  ["🎇", "sparkler fireworks"], ["🕯️", "candle vigil"], ["🪔", "diwali lamp"],
+  ["✈️", "flight plane travel trip vacation airport"], ["🛫", "takeoff flight departure travel"],
+  ["🛬", "landing flight arrival travel"], ["🧳", "luggage travel trip suitcase"], ["🚗", "car drive trip"],
+  ["🚙", "car suv drive"], ["🚕", "taxi cab ride"], ["🚌", "bus transit"],
+  ["🚆", "train transit travel"], ["🚇", "subway metro transit"], ["🚢", "cruise ship boat travel"],
+  ["⛵", "sailing boat"], ["🏝️", "beach island vacation holiday"], ["🏖️", "beach vacation holiday"],
+  ["🏕️", "camping tent outdoors"], ["🏔️", "mountain hike"], ["🥾", "hiking boots trail"],
+  ["🗺️", "map travel trip"], ["🧭", "compass navigate travel"], ["🏨", "hotel stay travel"],
+  ["🏠", "home house"], ["🏡", "house home garden"], ["🧹", "clean chores sweep"],
+  ["🧺", "laundry basket chores"], ["🧼", "clean soap wash"], ["🔧", "fix repair tool wrench"],
+  ["🔨", "hammer fix repair build"], ["🪚", "saw diy build"], ["🪛", "screwdriver fix repair"],
+  ["🧰", "toolbox repair fix"], ["🚿", "shower bath"], ["🛁", "bath tub"],
+  ["🌱", "plant garden grow seedling"], ["🌷", "tulip flower garden spring"], ["🌻", "sunflower garden"],
+  ["🐶", "dog pet vet walk"], ["🐱", "cat pet vet"], ["🐾", "pet paws vet animal"],
+  ["🐕", "dog pet walk vet"], ["🐟", "fish pet"], ["🦴", "bone dog pet"],
+  ["👶", "baby infant newborn"], ["🍼", "baby bottle feed"], ["🧒", "child kid"],
+  ["👨‍👩‍👧", "family kids"], ["👴", "grandpa elder family"], ["👵", "grandma elder family"],
+  ["💒", "wedding marriage church"], ["👰", "bride wedding"], ["🤵", "groom wedding tux"],
+  ["🎫", "ticket event show concert"], ["🎟️", "ticket admission event"], ["📸", "photo camera picture"],
+  ["🖼️", "picture frame art photo"], ["📖", "book read reading"], ["📔", "journal notebook diary"],
+  ["✅", "done check complete task"], ["⭐", "star favorite important"], ["🔔", "bell reminder notify"],
+  ["📌", "pin important note"], ["📍", "location place map"], ["🚩", "flag important deadline"],
+  ["🔥", "fire urgent hot streak"], ["💡", "idea lightbulb think"], ["⚡", "energy fast power urgent"],
+  ["🌟", "star sparkle special"], ["🎯", "goal target aim"], ["🏆", "trophy win award"],
+  ["🥇", "medal first win gold"], ["🎖️", "medal honor award"], ["👏", "clap applause well done"],
+  ["🙏", "thanks pray please gratitude"], ["🤝", "handshake meeting deal agreement"], ["👥", "meeting people group"],
+  ["🗣️", "talk speak meeting discuss"], ["📢", "announce loud news"], ["🚨", "alert emergency urgent"],
+  ["⚙️", "settings gear config"], ["🔑", "key access lock"], ["🔒", "lock secure private"],
+  ["☀️", "sun sunny weather day"], ["🌙", "moon night"], ["🌧️", "rain weather"],
+  ["❄️", "snow winter cold weather"], ["🌈", "rainbow weather"], ["🌡️", "temperature weather fever"],
+];
+// Keep only the first emoji-like grapheme; ignore any plain text. Uses grapheme
+// segmentation so multi-codepoint emoji (ZWJ sequences like 👨‍👩‍👧, or ones with a
+// ️ variation selector like ✈️) survive intact instead of being cut mid-sequence.
 function firstEmoji(str) {
   if (!str) return "";
-  const chars = Array.from(str.trim());
-  const c = chars[0] || "";
-  return /\p{Extended_Pictographic}/u.test(c) ? c : "";
+  const s = str.trim();
+  if (!s) return "";
+  const first =
+    typeof Intl !== "undefined" && Intl.Segmenter
+      ? [...new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(s)][0].segment
+      : Array.from(s)[0] || "";
+  return /\p{Extended_Pictographic}/u.test(first) ? first : "";
 }
+let selectedEventEmoji = "";
 function setEventEmoji(emoji) {
-  const e = firstEmoji(emoji);
-  const box = $("#eventEmoji");
-  if (box) box.value = e;
+  selectedEventEmoji = firstEmoji(emoji);
+  const btn = $("#eventEmojiBtn");
+  if (btn) {
+    btn.textContent = selectedEventEmoji || "🙂";
+    btn.classList.toggle("empty", !selectedEventEmoji);
+  }
   document
-    .querySelectorAll("#eventEmojiPicks .emoji-pick")
-    .forEach((b) => b.classList.toggle("on", b.dataset.emoji === e));
+    .querySelectorAll("#emojiGrid .emoji-pick")
+    .forEach((b) => b.classList.toggle("on", b.dataset.emoji === selectedEventEmoji));
 }
 function getEventEmoji() {
-  return firstEmoji($("#eventEmoji") ? $("#eventEmoji").value : "");
+  return selectedEventEmoji;
+}
+// Build the searchable dropdown: a search box that filters an emoji grid.
+function buildEmojiPicker() {
+  const grid = $("#emojiGrid");
+  if (!grid) return;
+  grid.addEventListener("click", (e) => {
+    const btn = e.target.closest(".emoji-pick");
+    if (!btn) return;
+    setEventEmoji(btn.dataset.emoji);
+    closeEmojiPicker();
+  });
+  $("#emojiSearch").addEventListener("input", (e) => renderEmojiGrid(e.target.value));
+  renderEmojiGrid("");
+}
+function renderEmojiGrid(query) {
+  const grid = $("#emojiGrid");
+  const term = (query || "").trim().toLowerCase();
+  const matches = EMOJI_DATA.filter(([, k]) => !term || k.includes(term));
+  grid.innerHTML =
+    `<button type="button" class="emoji-pick none" data-emoji="" aria-label="No emoji" title="No emoji">∅</button>` +
+    matches
+      .map(([e, k]) => `<button type="button" class="emoji-pick" data-emoji="${e}" title="${k}">${e}</button>`)
+      .join("") +
+    (matches.length ? "" : `<span class="emoji-empty">No emoji found</span>`);
+  grid
+    .querySelectorAll(".emoji-pick")
+    .forEach((b) => b.classList.toggle("on", b.dataset.emoji === selectedEventEmoji));
+}
+function openEmojiPicker() {
+  $("#emojiSearch").value = "";
+  renderEmojiGrid("");
+  $("#emojiPicker").classList.remove("hidden");
+  $("#eventEmojiBtn").setAttribute("aria-expanded", "true");
+  $("#emojiSearch").focus();
+}
+function closeEmojiPicker() {
+  $("#emojiPicker").classList.add("hidden");
+  $("#eventEmojiBtn").setAttribute("aria-expanded", "false");
+}
+function toggleEmojiPicker() {
+  if ($("#emojiPicker").classList.contains("hidden")) openEmojiPicker();
+  else closeEmojiPicker();
 }
 
 function renderCalendar() {
@@ -1943,24 +2226,42 @@ window.addEventListener("scroll", () => hideWeekPop(), true);
 // ---- Day detail / event editor ----
 function openDayEditor(dateKey) {
   dayEditorDate = dateKey;
-  editingEventId = null;
-  setEventPerson("0");
   const d = parseKey(dateKey);
   $("#dayEditorTitle").textContent = d.toLocaleDateString(undefined, {
     weekday: "short",
     month: "long",
     day: "numeric",
   });
-  $("#addEventTitle").value = "";
-  setEventTime("");
-  setEventRepeat("none");
-  setEventEmoji("");
-  $("#addEventSubmit").textContent = "Add";
-  renderDayEvents();
+  setDayEditorMode("list"); // resets the form and renders the day's events
   $("#dayEditor").classList.remove("hidden");
   pushOverlayState(); // Back closes the editor rather than the app
 }
+// The pop-up has two modes: "list" shows the day's events + an Add button;
+// "form" shows the add/edit prompts. The top-left button and Back peel form→list.
+function setDayEditorMode(mode) {
+  dayEditorMode = mode;
+  const listMode = mode === "list";
+  $("#dayEventList").classList.toggle("hidden", !listMode);
+  $("#dayAddBtn").parentElement.classList.toggle("hidden", !listMode);
+  $("#addEventForm").classList.toggle("hidden", listMode);
+  $("#dayEditorClose").textContent = listMode ? "Close" : "Back";
+  if (listMode) {
+    closeEmojiPicker();
+    resetEventForm();
+    renderDayEvents();
+  } else {
+    $("#dayEventEmpty").classList.add("hidden");
+  }
+}
+// Enter form mode to add a brand-new event (Back returns to the list).
+function openEventForm() {
+  resetEventForm();
+  setDayEditorMode("form");
+  pushOverlayState();
+  $("#addEventTitle").focus();
+}
 function closeDayEditor() {
+  closeEmojiPicker();
   $("#dayEditor").classList.add("hidden");
   dayEditorDate = null;
   editingEventId = null;
@@ -2018,7 +2319,8 @@ function startEditEvent(e) {
   setEventRepeat(e.repeat, e.days);
   setEventEmoji(e.emoji || "");
   $("#addEventSubmit").textContent = "Save";
-  renderDayEvents();
+  setDayEditorMode("form"); // show the prompts, populated for editing
+  pushOverlayState(); // Back returns to the list
   $("#addEventTitle").focus();
 }
 function resetEventForm() {
@@ -2070,12 +2372,12 @@ $("#addEventForm").addEventListener("submit", (e) => {
     });
   }
   saveEvents();
-  resetEventForm();
-  renderDayEvents();
   renderCalendar();
   renderHomeIfActive();
-  $("#addEventTitle").focus();
+  dismissOverlays(); // form → list, showing the updated events for the day
 });
+$("#dayAddBtn").addEventListener("click", openEventForm);
+// Top-left button: "Back" (form → list) or "Close" (list → shut), via one peel.
 $("#dayEditorClose").addEventListener("click", dismissOverlays);
 // Tapping the dimmed backdrop (outside the card) closes the pop-up.
 $("#dayEditor").addEventListener("click", (e) => {
@@ -2087,18 +2389,25 @@ document.addEventListener("keydown", (e) => {
 buildEventTimeOptions();
 buildEmojiPicker();
 $("#eventRepeat").addEventListener("change", syncRepeatDaysVisibility);
-$("#eventEmoji").addEventListener("input", () => setEventEmoji($("#eventEmoji").value));
+$("#eventEmojiBtn").addEventListener("click", (e) => {
+  e.stopPropagation();
+  toggleEmojiPicker();
+});
+// Clicking anywhere outside the dropdown (or its button) closes it.
+document.addEventListener("click", (e) => {
+  if ($("#emojiPicker").classList.contains("hidden")) return;
+  if (e.target.closest("#emojiPicker") || e.target.closest("#eventEmojiBtn")) return;
+  closeEmojiPicker();
+});
 
 // ============================================================
 //  Home (dashboard — the day's pertinent info in content-sized cards)
 // ============================================================
-function dashCard(title, countText) {
+function dashCard(title) {
   const card = document.createElement("div");
   card.className = "dash-card";
   card.innerHTML =
-    `<div class="dash-head"><h3>${escapeHtml(title)}</h3>` +
-    (countText ? `<span class="dash-count">${escapeHtml(String(countText))}</span>` : "") +
-    `</div><div class="dash-body"></div>`;
+    `<div class="dash-head"><h3>${escapeHtml(title)}</h3></div><div class="dash-body"></div>`;
   return card;
 }
 function dashEmpty(msg) {
@@ -2115,10 +2424,38 @@ function renderHome() {
   const todayKey = isoDate(new Date());
   const weekKey = weekKeyOf(new Date());
 
+  // — Grocery quick-add (top of the screen; items go straight to this week) —
+  {
+    const card = dashCard("Grocery");
+    const body = card.querySelector(".dash-body");
+    const form = document.createElement("form");
+    form.className = "dash-add";
+    form.innerHTML =
+      `<input type="text" placeholder="Add to this week's list…" autocomplete="off" />` +
+      `<button type="submit">Add</button>`;
+    const input = form.querySelector("input");
+    form.addEventListener("submit", (ev) => {
+      ev.preventDefault();
+      const name = input.value.trim();
+      if (!addGroceryItem(name)) return;
+      toast(`Added “${name}” to this week's list`);
+      input.value = "";
+      if (groceryWeek === weekKey) renderGrocery(lastGroceryRecipes, weekKey);
+    });
+    body.appendChild(form);
+    const link = document.createElement("button");
+    link.type = "button";
+    link.className = "dash-link";
+    link.textContent = "Open grocery list →";
+    link.addEventListener("click", () => activateTab("grocery"));
+    body.appendChild(link);
+    grid.appendChild(card);
+  }
+
   // — This week's recipes (from the Planner) —
   const dishes = weekDishes(weekKey);
   {
-    const card = dashCard("This week's recipes", dishes.length || "");
+    const card = dashCard("Recipes");
     const body = card.querySelector(".dash-body");
     if (!dishes.length) body.appendChild(dashEmpty("No dishes planned this week."));
     else
@@ -2137,7 +2474,7 @@ function renderHome() {
   // — Today's calendar events —
   const dayEvents = eventsOnDay(todayKey);
   {
-    const card = dashCard("Today's events", dayEvents.length || "");
+    const card = dashCard("Calendar");
     const body = card.querySelector(".dash-body");
     if (!dayEvents.length) body.appendChild(dashEmpty("Nothing scheduled today."));
     else
@@ -2154,12 +2491,12 @@ function renderHome() {
     grid.appendChild(card);
   }
 
-  // — To-dos due this week —
-  const dueTodos = todosDueThisWeek();
+  // — To-dos due in the next 7 days —
+  const dueTodos = todosDueNext7Days();
   {
-    const card = dashCard("To-do this week", dueTodos.filter((t) => !t.done).length || "");
+    const card = dashCard("To-Do");
     const body = card.querySelector(".dash-body");
-    if (!dueTodos.length) body.appendChild(dashEmpty("Nothing due this week."));
+    if (!dueTodos.length) body.appendChild(dashEmpty("Nothing due in the next 7 days."));
     else
       dueTodos.forEach((t) => {
         const row = document.createElement("div");
@@ -2179,7 +2516,7 @@ function renderHome() {
     .map((it) => ({ it, a: personCount(it, "0", todayKey), k: personCount(it, "1", todayKey) }))
     .filter((x) => x.a + x.k > 0);
   {
-    const card = dashCard("Chores done today", doneToday.length || "");
+    const card = dashCard("Chores");
     const body = card.querySelector(".dash-body");
     if (!doneToday.length) body.appendChild(dashEmpty("No chores logged today yet."));
     else
@@ -2189,6 +2526,13 @@ function renderHome() {
         row.innerHTML = `<span class="dash-row-title">${escapeHtml(it.name)}</span><span class="dash-pips">${pipBoxes(a, k)}</span>`;
         body.appendChild(row);
       });
+    const totalDone = doneToday.reduce((n, x) => n + x.a + x.k, 0);
+    if (totalDone) {
+      const total = document.createElement("div");
+      total.className = "dash-total";
+      total.textContent = `${totalDone} completed today`;
+      body.appendChild(total);
+    }
     grid.appendChild(card);
   }
 }
