@@ -387,6 +387,8 @@ const groceryEmpty = $("#groceryEmpty");
 document.querySelectorAll(".tab").forEach((tab) => {
   tab.addEventListener("click", () => activateTab(tab.dataset.tab));
 });
+// Settings now lives on the Home dashboard instead of the tab strip.
+$(".home-settings")?.addEventListener("click", () => activateTab("settings"));
 // Meal Planner sub-nav (Planner / Find Recipes / Grocery List), one row per panel.
 document.querySelectorAll(".meal-nav .chip").forEach((chip) => {
   chip.addEventListener("click", () => activateTab(chip.dataset.mv));

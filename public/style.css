@@ -154,24 +154,27 @@ body::before {
 .tab-home svg { display: block; width: 30px; height: 30px; border-radius: 8px; }
 .tab-home:hover { background: var(--card); }
 .tab-home.active { border-bottom-color: var(--accent); }
-/* Settings gear mirrors the Home icon, pinned to the RIGHT so it stays visible
-   while the middle tabs scroll underneath it. */
-.tab-settings {
-  position: sticky;
-  right: 0;
-  z-index: 2;
-  flex: none;
-  margin-left: auto; /* push to the far right of the strip */
+/* Settings lives at the bottom-right of the Home dashboard — a low-key link
+   rather than a top-level tab, since it's rarely touched. */
+.home-foot {
   display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 6px 12px 7px;
-  background: var(--card);
-  box-shadow: -8px 0 8px -6px rgba(0, 0, 0, 0.28);
+  justify-content: flex-end;
+  margin-top: 22px;
 }
-.tab-settings svg { display: block; width: 30px; height: 30px; border-radius: 8px; }
-.tab-settings:hover { background: var(--card); }
-.tab-settings.active { border-bottom-color: var(--accent); }
+.home-settings {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 14px;
+  border: 1px solid var(--line, var(--card));
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+.home-settings svg { width: 18px; height: 18px; }
+.home-settings:hover { color: var(--accent); border-color: var(--accent); }
 .pill {
   display: inline-block;
   min-width: 20px;
