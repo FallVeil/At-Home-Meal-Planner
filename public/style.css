@@ -862,6 +862,16 @@ button { font-family: inherit; }
 }
 .dash-head { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
 .dash-head h3 { margin: 0; font-family: var(--font-display); font-weight: 500; font-size: 1.1rem; }
+/* Card headings that double as a shortcut into their full section. */
+.dash-head-link { cursor: pointer; border-radius: 6px; }
+.dash-head-link h3::after {
+  content: "›"; margin-left: 6px; color: var(--muted);
+  font-weight: 400; transition: transform 0.12s ease, color 0.12s ease;
+  display: inline-block;
+}
+.dash-head-link:hover h3, .dash-head-link:focus-visible h3 { color: var(--accent); }
+.dash-head-link:hover h3::after { color: var(--accent); transform: translateX(2px); }
+.dash-head-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .dash-body { display: flex; flex-direction: column; gap: 9px; }
 /* Home quick-add (grocery) */
 .dash-add { display: flex; gap: 8px; }
@@ -876,12 +886,6 @@ button { font-family: inherit; }
   padding: 9px 16px; border-radius: 10px; font-weight: 600; cursor: pointer;
 }
 .dash-add button:hover { background: var(--green-dark); }
-/* Low-profile shortcut link on a dashboard card */
-.dash-link {
-  align-self: flex-start; background: none; border: none; padding: 2px 0;
-  color: var(--muted); font-size: 0.85rem; cursor: pointer;
-}
-.dash-link:hover { color: var(--accent); }
 /* Subtle running total at the foot of a card (e.g. chores completed) */
 .dash-total {
   margin-top: 4px; padding-top: 8px; border-top: 1px solid var(--line-faint);

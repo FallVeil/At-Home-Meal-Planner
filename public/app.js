@@ -2529,11 +2529,26 @@ document.addEventListener("click", (e) => {
 // ============================================================
 //  Home (dashboard — the day's pertinent info in content-sized cards)
 // ============================================================
-function dashCard(title) {
+// A card whose title doubles as a shortcut into its full section. Pass an
+// `onNav` callback to make the heading a clickable link into that tab.
+function dashCard(title, onNav) {
   const card = document.createElement("div");
   card.className = "dash-card";
   card.innerHTML =
     `<div class="dash-head"><h3>${escapeHtml(title)}</h3></div><div class="dash-body"></div>`;
+  if (onNav) {
+    const head = card.querySelector(".dash-head");
+    head.classList.add("dash-head-link");
+    head.setAttribute("role", "link");
+    head.setAttribute("tabindex", "0");
+    head.addEventListener("click", onNav);
+    head.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter" || ev.key === " ") {
+        ev.preventDefault();
+        onNav();
+      }
+    });
+  }
   return card;
 }
 function dashEmpty(msg) {
@@ -2552,7 +2567,7 @@ function renderHome() {
 
   // — Grocery quick-add (top of the screen; items go straight to this week) —
   {
-    const card = dashCard("Grocery");
+    const card = dashCard("Grocery", () => activateTab("grocery"));
     const body = card.querySelector(".dash-body");
     const form = document.createElement("form");
     form.className = "dash-add";
@@ -2569,19 +2584,13 @@ function renderHome() {
       if (groceryWeek === weekKey) renderGrocery(lastGroceryRecipes, weekKey);
     });
     body.appendChild(form);
-    const link = document.createElement("button");
-    link.type = "button";
-    link.className = "dash-link";
-    link.textContent = "Open grocery list →";
-    link.addEventListener("click", () => activateTab("grocery"));
-    body.appendChild(link);
     grid.appendChild(card);
   }
 
   // — This week's recipes (from the Planner) —
   const dishes = weekDishes(weekKey);
   {
-    const card = dashCard("Recipes");
+    const card = dashCard("Recipes", () => activateTab("plan"));
     const body = card.querySelector(".dash-body");
     if (!dishes.length) body.appendChild(dashEmpty("No dishes planned this week."));
     else
@@ -2600,7 +2609,7 @@ function renderHome() {
   // — Today's calendar events —
   const dayEvents = eventsOnDay(todayKey);
   {
-    const card = dashCard("Calendar");
+    const card = dashCard("Calendar", () => activateTab("calendar"));
     const body = card.querySelector(".dash-body");
     if (!dayEvents.length) body.appendChild(dashEmpty("Nothing scheduled today."));
     else
@@ -2620,7 +2629,10 @@ function renderHome() {
   // — To-dos due in the next 7 days —
   const dueTodos = todosDueNext7Days();
   {
-    const card = dashCard("To-Do");
+    const card = dashCard("To-Do", () => {
+      notesSubView = "todo";
+      activateTab("notes");
+    });
     const body = card.querySelector(".dash-body");
     if (!dueTodos.length) body.appendChild(dashEmpty("Nothing due in the next 7 days."));
     else
@@ -2642,7 +2654,7 @@ function renderHome() {
     .map((it) => ({ it, a: personCount(it, "0", todayKey), k: personCount(it, "1", todayKey) }))
     .filter((x) => x.a + x.k > 0);
   {
-    const card = dashCard("Chores");
+    const card = dashCard("Chores", () => activateTab("chores"));
     const body = card.querySelector(".dash-body");
     if (!doneToday.length) body.appendChild(dashEmpty("No chores logged today yet."));
     else
