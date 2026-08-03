@@ -475,8 +475,56 @@ button { font-family: inherit; }
 }
 .fav-star:hover { background: rgba(0, 0, 0, 0.75); }
 .fav-star.on { color: var(--rose); }
+/* Notepad badge marking a favorite that carries notes (top-left of the image) */
+.note-badge {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: 50%;
+  cursor: pointer;
+  background: rgba(0, 0, 0, 0.55);
+  color: var(--accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.note-badge:hover { background: rgba(0, 0, 0, 0.75); }
 /* Favorite toggle button inside the recipe modal */
 .fav-btn.on { color: var(--rose); border-color: var(--rose); }
+/* Editable notes on a favorited recipe, inside the detail modal */
+.recipe-notes { margin-top: 16px; }
+.notes-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--accent);
+  font-weight: 600;
+  font-size: 0.9rem;
+  margin-bottom: 6px;
+}
+.notes-input {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px 12px;
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.95rem;
+  resize: vertical;
+  min-height: 64px;
+}
+.notes-input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.notes-hint {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 0.88rem;
+}
 .card img {
   width: 100%;
   aspect-ratio: 3 / 2;

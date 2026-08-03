@@ -88,6 +88,19 @@ function toggleFavorite(recipe) {
   saveFavorites();
   return isFavorite(recipe.id);
 }
+// Notes ride along on the favorite object, so they sync like everything else.
+// Only favorited recipes can carry a note (unfavoriting drops it).
+const favById = (id) => favorites.find((r) => String(r.id) === String(id));
+const getFavNote = (id) => (favById(id)?.note || "");
+const hasFavNote = (id) => !!getFavNote(id).trim();
+function setFavNote(id, text) {
+  const f = favById(id);
+  if (!f) return;
+  const t = String(text).trim();
+  if (t) f.note = t;
+  else delete f.note;
+  saveFavorites();
+}
 
 // ---- Household settings (people's names) — synced like the other data ----
 const SETTINGS_KEY = "mealPlanner.settings.v1";
@@ -825,6 +838,20 @@ function recipeCard(r, context, weekKey) {
     if (!nowFav && favViewActive()) renderFavorites();
   });
   card.appendChild(star);
+
+  // Notepad badge signals this favorite carries notes; tap it to open the recipe.
+  if (hasFavNote(r.id)) {
+    const note = document.createElement("button");
+    note.className = "note-badge";
+    note.setAttribute("aria-label", "Has notes");
+    note.title = getFavNote(r.id);
+    note.innerHTML = notepadIcon(16);
+    note.addEventListener("click", (e) => {
+      e.stopPropagation();
+      showRecipe(r.id);
+    });
+    card.appendChild(note);
+  }
 
   // On the Favorites tab, a menu to sort the recipe into a category.
   if (context === "favorites") {
@@ -3251,7 +3278,33 @@ async function showRecipe(id) {
       <div class="card-actions" style="margin-top:16px">
         <button class="add-btn${added ? " added" : ""}" id="modalAdd">${added ? "Added" : "Add to plan"}</button>
         <button class="ghost fav-btn${isFavorite(r.id) ? " on" : ""}" id="modalFav">${isFavorite(r.id) ? "Favorited" : "Favorite"}</button>
-      </div>`;
+      </div>
+      <div class="recipe-notes" id="recipeNotes"></div>`;
+
+    // Editable notes — available once the recipe is favorited.
+    let noteSaveTimer = null;
+    function renderRecipeNotes() {
+      const box = $("#recipeNotes");
+      if (!box) return;
+      if (!isFavorite(r.id)) {
+        box.innerHTML = `<p class="notes-hint">${notepadIcon(15)} Favorite this recipe to add your own notes.</p>`;
+        return;
+      }
+      box.innerHTML = `
+        <label class="notes-head" for="favNoteInput">${notepadIcon(16)} <span>Notes</span></label>
+        <textarea id="favNoteInput" class="notes-input" rows="3"
+          placeholder="Tweaks, swaps, who liked it…">${escapeHtml(getFavNote(r.id))}</textarea>`;
+      const ta = $("#favNoteInput");
+      ta.addEventListener("input", () => {
+        clearTimeout(noteSaveTimer);
+        noteSaveTimer = setTimeout(() => setFavNote(r.id, ta.value), 400);
+      });
+      ta.addEventListener("blur", () => {
+        clearTimeout(noteSaveTimer);
+        setFavNote(r.id, ta.value);
+      });
+    }
+    renderRecipeNotes();
     $("#modalFav").addEventListener("click", () => {
       const nowFav = toggleFavorite({
         id: r.id,
@@ -3265,6 +3318,7 @@ async function showRecipe(id) {
       b.classList.toggle("on", nowFav);
       b.textContent = nowFav ? "Favorited" : "Favorite";
       toast(nowFav ? `Favorited “${r.title}”` : `Unfavorited “${r.title}”`);
+      renderRecipeNotes(); // show/hide the notes editor to match fav state
     });
     const addBtn = $("#modalAdd");
     addBtn.addEventListener("click", () => {
@@ -3330,6 +3384,9 @@ function starIcon(filled) {
   return filled
     ? `<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="${d}"/></svg>`
     : `<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" d="${d}"/></svg>`;
+}
+function notepadIcon(size = 16) {
+  return `<svg viewBox="0 0 24 24" width="${size}" height="${size}" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H6a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8z"/><path d="M14 3v5h5"/><line x1="8.5" y1="12.5" x2="15" y2="12.5"/><line x1="8.5" y1="16" x2="13" y2="16"/></svg>`;
 }
 function placeholder() {
   return (
