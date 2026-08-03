@@ -89,6 +89,71 @@ function toggleFavorite(recipe) {
   return isFavorite(recipe.id);
 }
 
+// ---- Household settings (people's names) — synced like the other data ----
+const SETTINGS_KEY = "mealPlanner.settings.v1";
+const DEFAULT_PEOPLE = ["Andrew", "Katie"];
+let settings = loadSettings();
+let settingsPushTimer = null;
+function loadSettings() {
+  try {
+    const s = JSON.parse(localStorage.getItem(SETTINGS_KEY));
+    if (s && typeof s === "object") return normalizeSettings(s);
+  } catch {
+    /* ignore */
+  }
+  return { people: [...DEFAULT_PEOPLE] };
+}
+// Always end up with exactly two non-empty names (data model is index-based).
+function normalizeSettings(s) {
+  const p = Array.isArray(s.people) ? s.people : [];
+  const people = [0, 1].map((i) => {
+    const name = typeof p[i] === "string" ? p[i].trim() : "";
+    return name || DEFAULT_PEOPLE[i];
+  });
+  return { people };
+}
+function saveSettings() {
+  localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+  scheduleSettingsPush();
+}
+function scheduleSettingsPush() {
+  if (!syncEnabled) return;
+  clearTimeout(settingsPushTimer);
+  settingsPushTimer = setTimeout(() => {
+    fetch("/api/settings", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ settings }),
+    }).catch(() => {});
+  }, 700);
+}
+// The two people are stored by index ("0"/"1"); names are just display labels.
+function personName(i) {
+  return (settings.people && settings.people[i]) || DEFAULT_PEOPLE[i] || `Person ${i + 1}`;
+}
+function personInitial(i) {
+  const n = personName(i).trim();
+  return (n[0] || "?").toUpperCase();
+}
+// Push the current names into the static bits of the DOM (legend, event picker).
+// Dynamically rendered spots (chore rows, calendar events) read the names directly.
+function applyPeopleLabels() {
+  [0, 1].forEach((i) => {
+    document.querySelectorAll(`#eventPerson [data-p="${i}"]`).forEach((b) => {
+      b.textContent = personInitial(i);
+      b.setAttribute("aria-label", personName(i));
+    });
+    document.querySelectorAll(`[data-person-bubble="${i}"]`).forEach((el) => {
+      el.textContent = personInitial(i);
+    });
+    document.querySelectorAll(`[data-person-name="${i}"]`).forEach((el) => {
+      el.textContent = personName(i);
+    });
+    const input = document.getElementById("nameInput" + i);
+    if (input && document.activeElement !== input) input.value = personName(i);
+  });
+}
+
 // ---- Cross-device sync (active only when the server has shared storage) ----
 let syncEnabled = false;
 let planPushTimer = null;
@@ -121,7 +186,7 @@ function scheduleFavPush() {
 async function refreshFromServer() {
   if (!syncEnabled) return;
   try {
-    const [pr, fr, gr, nr, tr, er, dr] = await Promise.all([
+    const [pr, fr, gr, nr, tr, er, dr, sr] = await Promise.all([
       fetch("/api/plan").then((r) => r.json()),
       fetch("/api/favorites").then((r) => r.json()),
       fetch("/api/grocery").then((r) => r.json()),
@@ -129,7 +194,13 @@ async function refreshFromServer() {
       fetch("/api/tracker").then((r) => r.json()),
       fetch("/api/events").then((r) => r.json()),
       fetch("/api/todos").then((r) => r.json()),
+      fetch("/api/settings").then((r) => r.json()),
     ]);
+    if (sr.enabled && sr.settings && Array.isArray(sr.settings.people)) {
+      settings = normalizeSettings(sr.settings);
+      localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+      applyPeopleLabels();
+    }
     if (pr.enabled && pr.plan) {
       plan = pr.plan;
       localStorage.setItem(PLAN_KEY, JSON.stringify(plan));
@@ -179,7 +250,7 @@ async function refreshFromServer() {
 async function initSync() {
   if (!syncEnabled) return;
   try {
-    const [pr, fr, gr, nr, tr, er, dr] = await Promise.all([
+    const [pr, fr, gr, nr, tr, er, dr, sr] = await Promise.all([
       fetch("/api/plan").then((r) => r.json()),
       fetch("/api/favorites").then((r) => r.json()),
       fetch("/api/grocery").then((r) => r.json()),
@@ -187,7 +258,20 @@ async function initSync() {
       fetch("/api/tracker").then((r) => r.json()),
       fetch("/api/events").then((r) => r.json()),
       fetch("/api/todos").then((r) => r.json()),
+      fetch("/api/settings").then((r) => r.json()),
     ]);
+    if (sr.enabled) {
+      const serverPeople = sr.settings && Array.isArray(sr.settings.people) ? sr.settings.people : null;
+      // A saved name that differs from the default means the household set it → server wins.
+      const serverHasNames = serverPeople && serverPeople.some((n, i) => (n || "").trim() && n.trim() !== DEFAULT_PEOPLE[i]);
+      if (serverHasNames) {
+        settings = normalizeSettings(sr.settings);
+        localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+      } else if (settings.people.some((n, i) => n !== DEFAULT_PEOPLE[i])) {
+        scheduleSettingsPush();
+      }
+      applyPeopleLabels();
+    }
     if (pr.enabled) {
       const serverPlan = pr.plan || {};
       if (Object.keys(serverPlan).length) {
@@ -430,6 +514,10 @@ function activateTab(name, fromHistory = false) {
   }
   if (name === "chores") {
     renderActiveChoreView();
+    refreshFromServer();
+  }
+  if (name === "settings") {
+    applyPeopleLabels(); // fill the name inputs with the current values
     refreshFromServer();
   }
 }
@@ -1831,9 +1919,11 @@ function repeatSummary(e) {
 }
 // Small A/K "bubble(s)" matching the chores visual.
 function personBubbles(person) {
-  if (person === "both") return `<span class="pbubble a">A</span><span class="pbubble k">K</span>`;
-  if (person === "1") return `<span class="pbubble k">K</span>`;
-  return `<span class="pbubble a">A</span>`;
+  const a = `<span class="pbubble a">${escapeHtml(personInitial(0))}</span>`;
+  const k = `<span class="pbubble k">${escapeHtml(personInitial(1))}</span>`;
+  if (person === "both") return a + k;
+  if (person === "1") return k;
+  return a;
 }
 const personClass = (p) => (p === "both" ? "p-both" : p === "1" ? "p-k" : "p-a");
 function fmtTime(t) {
@@ -2548,7 +2638,6 @@ function renderHome() {
 //  Chores & habits (daily checklist, per-person, with streaks)
 // ============================================================
 const TRACKER_KEY = "mealPlanner.tracker.v1";
-const PEOPLE = ["Andrew", "Katie"];
 const CHORE_CAT_ORDER = ["General", "Living room", "Kitchen", "Bedroom", "Bathroom", "Outside"];
 let tracker = loadTracker(); // { items: [{id,name,category,done:{"0":[],"1":[]}}] }
 let trackerPushTimer = null;
@@ -2817,6 +2906,38 @@ $("#choreEdit").addEventListener("click", () => {
   $("#choreEdit").textContent = editing ? "Done" : "Edit";
 });
 
+// ---- People's names editor (Settings tab) ----
+function saveNamesEditor() {
+  settings = normalizeSettings({ people: [$("#nameInput0").value, $("#nameInput1").value] });
+  saveSettings();
+  applyPeopleLabels(); // refresh the inputs, calendar legend and event pickers
+  renderActiveChoreView();
+  renderCalendarIfActive();
+  toast("Names saved");
+}
+$("#namesEditor").addEventListener("submit", (e) => {
+  e.preventDefault();
+  saveNamesEditor();
+});
+
+// ---- Account block in Settings (only meaningful when the passcode gate is on) ----
+function applyAccountInfo(cfg) {
+  const on = Boolean(cfg && cfg.authOn);
+  $("#accountBlock").classList.toggle("hidden", !on);
+  if (on && cfg.household) {
+    $("#householdLabel").textContent = `Signed in to: ${cfg.household}`;
+  }
+}
+$("#signOutBtn").addEventListener("click", async () => {
+  try {
+    await fetch("/api/logout", { method: "POST" });
+  } catch {
+    /* even if the request fails, clear local state and reload to the gate */
+  }
+  localStorage.clear(); // don't leak this household's cached data to the next login
+  location.reload();
+});
+
 function choreRow(item) {
   const row = document.createElement("div");
   const done = choreDoneToday(item);
@@ -2825,12 +2946,13 @@ function choreRow(item) {
   const streak = choreStreak(item);
   const aN = personCount(item, "0", today);
   const kN = personCount(item, "1", today);
-  const pbtn = (p, letter, name, n) =>
-    `<button type="button" class="pbtn ${letter.toLowerCase()}${n > 0 ? " on" : ""}" data-p="${p}" aria-label="${escapeHtml(name)} did this${n > 1 ? " (" + n + "×)" : ""}" title="${escapeHtml(name)} — tap to add, hold to remove">${letter}</button>`;
+  // `cls` (a/k) drives the person's color; `letter` is just the displayed initial.
+  const pbtn = (p, cls, letter, name, n) =>
+    `<button type="button" class="pbtn ${cls}${n > 0 ? " on" : ""}" data-p="${p}" aria-label="${escapeHtml(name)} did this${n > 1 ? " (" + n + "×)" : ""}" title="${escapeHtml(name)} — tap to add, hold to remove">${escapeHtml(letter)}</button>`;
   row.innerHTML = `
     <div class="chore-people">
-      ${pbtn("0", "A", PEOPLE[0], aN)}
-      ${pbtn("1", "K", PEOPLE[1], kN)}
+      ${pbtn("0", "a", personInitial(0), personName(0), aN)}
+      ${pbtn("1", "k", personInitial(1), personName(1), kN)}
     </div>
     <span class="chore-name">${escapeHtml(item.name)}</span>
     <span class="chore-marks">${pipBoxes(aN, kN)}</span>
@@ -3225,6 +3347,7 @@ async function init() {
   updateFavCount();
   updateNotesCount();
   updateTargetBanner();
+  applyPeopleLabels(); // reflect saved names in the legend/pickers before first paint
   renderPlanner();
   renderCalendar();
   renderHome(); // Home dashboard is the default landing view
@@ -3232,6 +3355,7 @@ async function init() {
     const cfg = await (await fetch("/api/config")).json();
     if (!cfg.hasKey) $("#keyBanner").classList.remove("hidden");
     syncEnabled = Boolean(cfg.storage);
+    applyAccountInfo(cfg);
     await initSync();
   } catch {
     /* server not reachable yet — ignore */

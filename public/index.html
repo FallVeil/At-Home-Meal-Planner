@@ -62,6 +62,13 @@
         <button class="tab" data-tab="mealplan">Meal Planner</button>
         <button class="tab" data-tab="notes">Notes</button>
         <button class="tab" data-tab="chores">Chores</button>
+        <button class="tab tab-settings" data-tab="settings" aria-label="Settings" title="Settings">
+          <svg viewBox="0 0 100 100" aria-hidden="true">
+            <rect width="100" height="100" rx="22" fill="#1a1b16"/>
+            <circle cx="50" cy="50" r="15" fill="none" stroke="#a6c199" stroke-width="6"/>
+            <path d="M67 50 L77 50 M62 38 L69.1 30.9 M50 33 L50 23 M38 38 L30.9 30.9 M33 50 L23 50 M38 62 L30.9 69.1 M50 67 L50 77 M62 62 L69.1 69.1" fill="none" stroke="#a6c199" stroke-width="6" stroke-linecap="round"/>
+          </svg>
+        </button>
       </nav>
     </header>
 
@@ -154,8 +161,8 @@
           <button id="calNext" class="nav-arrow" aria-label="Next month">▶</button>
         </div>
         <div class="cal-legend">
-          <span class="legend-item"><span class="pbubble a">A</span> Andrew</span>
-          <span class="legend-item"><span class="pbubble k">K</span> Katie</span>
+          <span class="legend-item"><span class="pbubble a" data-person-bubble="0">A</span> <span data-person-name="0">Andrew</span></span>
+          <span class="legend-item"><span class="pbubble k" data-person-bubble="1">K</span> <span data-person-name="1">Katie</span></span>
           <button id="calToday" class="linkish" type="button">Today</button>
         </div>
         <div class="cal-weekdays">
@@ -285,6 +292,29 @@
             <button type="button" class="chip" data-range="month">This month</button>
           </div>
           <div id="historyGrid" class="history-wrap"></div>
+        </div>
+      </section>
+
+      <!-- SETTINGS -->
+      <section id="tab-settings" class="panel">
+        <div class="section-head">
+          <h2>Settings</h2>
+        </div>
+        <form id="namesEditor" class="names-editor">
+          <p class="names-editor-hint">Who's in your household? These names show on chores and the calendar.</p>
+          <label class="names-editor-field">Person 1
+            <input id="nameInput0" type="text" maxlength="20" autocomplete="off" spellcheck="false" />
+          </label>
+          <label class="names-editor-field">Person 2
+            <input id="nameInput1" type="text" maxlength="20" autocomplete="off" spellcheck="false" />
+          </label>
+          <div class="names-editor-actions">
+            <button type="submit" id="namesSave" class="primary">Save names</button>
+          </div>
+        </form>
+        <div id="accountBlock" class="account-block hidden">
+          <p id="householdLabel" class="account-label"></p>
+          <button type="button" id="signOutBtn" class="ghost">Sign out</button>
         </div>
       </section>
     </main>

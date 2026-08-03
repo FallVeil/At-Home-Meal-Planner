@@ -70,27 +70,65 @@ app.use(express.json());
 //  the passcode also invalidates old sessions.
 // ---------------------------------------------------------------------------
 app.set("trust proxy", 1); // Render terminates TLS at its proxy; trust X-Forwarded-*
-const PASSCODE = process.env.APP_PASSCODE || "";
-const AUTH_ON = Boolean(PASSCODE);
+// Households: each passcode unlocks its own isolated data namespace.
+//   HOUSEHOLDS="andrew-katie:pass1,smiths:pass2"  (id:passcode, comma-separated)
+// Split on the FIRST ":" so a passcode may contain ":" — an id may not, and
+// neither an id nor a passcode may contain ",". Back-compat: if HOUSEHOLDS is
+// empty but the old APP_PASSCODE is set, treat that as the single legacy
+// household so nothing changes until other families are actually added.
+const LEGACY_HOUSEHOLD_ID = process.env.LEGACY_HOUSEHOLD_ID || "andrew-katie";
+const LOCAL_HOUSEHOLD_ID = "local"; // used when auth is off (local/dev)
+function parseHouseholds() {
+  const map = new Map(); // passcode -> household id
+  (process.env.HOUSEHOLDS || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .forEach((pair) => {
+      const i = pair.indexOf(":");
+      if (i <= 0) return;
+      const id = pair.slice(0, i).trim();
+      const pass = pair.slice(i + 1).trim();
+      if (id && pass) map.set(pass, id);
+    });
+  if (!map.size && process.env.APP_PASSCODE) map.set(process.env.APP_PASSCODE, LEGACY_HOUSEHOLD_ID);
+  return map;
+}
+const HOUSEHOLDS = parseHouseholds(); // passcode -> id
+const AUTH_ON = HOUSEHOLDS.size > 0;
+// One server-wide signing key for all household cookies. Set APP_SESSION_SECRET
+// in Render so sessions survive roster edits; otherwise it's derived from the
+// current passcode set (changing the roster then invalidates old sessions).
 const AUTH_SECRET =
   process.env.APP_SESSION_SECRET ||
-  crypto.createHash("sha256").update(PASSCODE + "::homebase").digest("hex");
+  crypto.createHash("sha256").update([...HOUSEHOLDS.keys()].sort().join("|") + "::homebase").digest("hex");
 const AUTH_COOKIE = "hb_auth";
 const AUTH_DAYS = 30;
 
-function authToken() {
-  const body = String(Date.now() + AUTH_DAYS * 86400000); // expiry timestamp
+// Cookie body = base64url(JSON{ h: householdId, exp }) so it carries identity,
+// signed with HMAC. base64url avoids colliding with the "body.sig" separator.
+function authToken(householdId) {
+  const body = Buffer.from(JSON.stringify({ h: householdId, exp: Date.now() + AUTH_DAYS * 86400000 })).toString(
+    "base64url"
+  );
   const sig = crypto.createHmac("sha256", AUTH_SECRET).update(body).digest("hex");
   return `${body}.${sig}`;
 }
-function authValid(tok) {
-  if (!tok || !tok.includes(".")) return false;
+// Returns the household id for a valid, unexpired, untampered token — else null.
+function authHousehold(tok) {
+  if (!tok || !tok.includes(".")) return null;
   const [body, sig] = tok.split(".");
   const expect = crypto.createHmac("sha256", AUTH_SECRET).update(body).digest("hex");
   const a = Buffer.from(sig);
   const b = Buffer.from(expect);
-  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return false; // tamper check
-  return Number(body) > Date.now(); // not expired
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return null; // tamper check
+  try {
+    const p = JSON.parse(Buffer.from(body, "base64url").toString());
+    if (!p || typeof p.h !== "string" || !(Number(p.exp) > Date.now())) return null; // expired/malformed
+    return p.h;
+  } catch {
+    return null;
+  }
 }
 function readCookie(req, name) {
   const raw = req.headers.cookie || "";
@@ -111,18 +149,24 @@ app.use((req, res, next) => {
   next();
 });
 
-// Exchange the shared passcode for a session cookie. Timing-safe compare.
+// Exchange a household passcode for a session cookie bound to that household.
 app.post("/api/login", (req, res) => {
   if (!AUTH_ON) return res.json({ ok: true });
   const given = String(req.body?.passcode ?? "");
-  const a = Buffer.from(given);
-  const b = Buffer.from(PASSCODE);
-  const ok = a.length === b.length && crypto.timingSafeEqual(a, b);
-  if (!ok) return res.status(401).json({ error: "bad-passcode" });
+  const ga = Buffer.from(given);
+  let matchedId = null;
+  for (const [pass, id] of HOUSEHOLDS) {
+    const pb = Buffer.from(pass);
+    if (ga.length === pb.length && crypto.timingSafeEqual(ga, pb)) {
+      matchedId = id;
+      break;
+    }
+  }
+  if (!matchedId) return res.status(401).json({ error: "bad-passcode" });
   const secure = req.secure ? "; Secure" : ""; // Secure only over HTTPS (Render); not on http://localhost
   res.setHeader(
     "Set-Cookie",
-    `${AUTH_COOKIE}=${authToken()}; Max-Age=${AUTH_DAYS * 86400}; Path=/; HttpOnly; SameSite=Lax${secure}`
+    `${AUTH_COOKIE}=${authToken(matchedId)}; Max-Age=${AUTH_DAYS * 86400}; Path=/; HttpOnly; SameSite=Lax${secure}`
   );
   res.json({ ok: true });
 });
@@ -131,10 +175,19 @@ app.post("/api/logout", (req, res) => {
   res.json({ ok: true });
 });
 
-// The gate itself: block anything non-public without a valid session.
+// The gate itself: block anything non-public without a valid session, and tag
+// the request with its household so data routes can scope their keys.
 app.use((req, res, next) => {
-  if (!AUTH_ON || authPublic(req.path)) return next();
-  if (authValid(readCookie(req, AUTH_COOKIE))) return next();
+  if (!AUTH_ON) {
+    req.householdId = LOCAL_HOUSEHOLD_ID; // open mode (local/dev): single default household
+    return next();
+  }
+  if (authPublic(req.path)) return next();
+  const hh = authHousehold(readCookie(req, AUTH_COOKIE));
+  if (hh) {
+    req.householdId = hh;
+    return next();
+  }
   if (req.path.startsWith("/api/")) return res.status(401).json({ error: "auth-required" });
   return res.status(401).sendFile(path.join(__dirname, "public", "login.html")); // show passcode screen
 });
@@ -274,14 +327,20 @@ app.get("/api/config", (req, res) => {
   res.json({
     hasKey: Boolean(API_KEY && API_KEY !== "your_key_here"),
     storage: storageEnabled,
+    household: req.householdId, // which household this session belongs to
+    authOn: AUTH_ON, // whether the passcode gate is active
   });
 });
 
-// ---- Shared plan + favorites (one household, no accounts) ----
+// Every household's data lives under its own key prefix so families never see
+// each other's plan, chores, calendar, etc.
+const keyFor = (req, name) => `hh:${req.householdId}:${name}`;
+
+// ---- Per-household plan + favorites (scoped by the session cookie) ----
 app.get("/api/plan", async (req, res) => {
   if (!storageEnabled) return res.json({ enabled: false });
   try {
-    res.json({ enabled: true, plan: (await redisGetJSON("meal:plan")) || {} });
+    res.json({ enabled: true, plan: (await redisGetJSON(keyFor(req, "plan"))) || {} });
   } catch {
     res.status(502).json({ error: "Could not read the shared plan." });
   }
@@ -289,7 +348,7 @@ app.get("/api/plan", async (req, res) => {
 app.put("/api/plan", async (req, res) => {
   if (!storageEnabled) return res.json({ enabled: false });
   try {
-    await redisSetJSON("meal:plan", req.body?.plan || {});
+    await redisSetJSON(keyFor(req, "plan"), req.body?.plan || {});
     res.json({ ok: true });
   } catch {
     res.status(502).json({ error: "Could not save the shared plan." });
@@ -298,7 +357,7 @@ app.put("/api/plan", async (req, res) => {
 app.get("/api/favorites", async (req, res) => {
   if (!storageEnabled) return res.json({ enabled: false });
   try {
-    res.json({ enabled: true, favorites: (await redisGetJSON("meal:favorites")) || [] });
+    res.json({ enabled: true, favorites: (await redisGetJSON(keyFor(req, "favorites"))) || [] });
   } catch {
     res.status(502).json({ error: "Could not read favorites." });
   }
@@ -306,7 +365,7 @@ app.get("/api/favorites", async (req, res) => {
 app.put("/api/favorites", async (req, res) => {
   if (!storageEnabled) return res.json({ enabled: false });
   try {
-    await redisSetJSON("meal:favorites", req.body?.favorites || []);
+    await redisSetJSON(keyFor(req, "favorites"), req.body?.favorites || []);
     res.json({ ok: true });
   } catch {
     res.status(502).json({ error: "Could not save favorites." });
@@ -315,7 +374,7 @@ app.put("/api/favorites", async (req, res) => {
 app.get("/api/grocery", async (req, res) => {
   if (!storageEnabled) return res.json({ enabled: false });
   try {
-    res.json({ enabled: true, grocery: (await redisGetJSON("meal:grocery")) || {} });
+    res.json({ enabled: true, grocery: (await redisGetJSON(keyFor(req, "grocery"))) || {} });
   } catch {
     res.status(502).json({ error: "Could not read grocery state." });
   }
@@ -323,7 +382,7 @@ app.get("/api/grocery", async (req, res) => {
 app.put("/api/grocery", async (req, res) => {
   if (!storageEnabled) return res.json({ enabled: false });
   try {
-    await redisSetJSON("meal:grocery", req.body?.grocery || {});
+    await redisSetJSON(keyFor(req, "grocery"), req.body?.grocery || {});
     res.json({ ok: true });
   } catch {
     res.status(502).json({ error: "Could not save grocery state." });
@@ -332,7 +391,7 @@ app.put("/api/grocery", async (req, res) => {
 app.get("/api/notes", async (req, res) => {
   if (!storageEnabled) return res.json({ enabled: false });
   try {
-    res.json({ enabled: true, notes: (await redisGetJSON("meal:notes")) || [] });
+    res.json({ enabled: true, notes: (await redisGetJSON(keyFor(req, "notes"))) || [] });
   } catch {
     res.status(502).json({ error: "Could not read notes." });
   }
@@ -340,7 +399,7 @@ app.get("/api/notes", async (req, res) => {
 app.put("/api/notes", async (req, res) => {
   if (!storageEnabled) return res.json({ enabled: false });
   try {
-    await redisSetJSON("meal:notes", req.body?.notes || []);
+    await redisSetJSON(keyFor(req, "notes"), req.body?.notes || []);
     res.json({ ok: true });
   } catch {
     res.status(502).json({ error: "Could not save notes." });
@@ -349,7 +408,7 @@ app.put("/api/notes", async (req, res) => {
 app.get("/api/events", async (req, res) => {
   if (!storageEnabled) return res.json({ enabled: false });
   try {
-    res.json({ enabled: true, events: (await redisGetJSON("meal:events")) || [] });
+    res.json({ enabled: true, events: (await redisGetJSON(keyFor(req, "events"))) || [] });
   } catch {
     res.status(502).json({ error: "Could not read calendar events." });
   }
@@ -357,7 +416,7 @@ app.get("/api/events", async (req, res) => {
 app.put("/api/events", async (req, res) => {
   if (!storageEnabled) return res.json({ enabled: false });
   try {
-    await redisSetJSON("meal:events", req.body?.events || []);
+    await redisSetJSON(keyFor(req, "events"), req.body?.events || []);
     res.json({ ok: true });
   } catch {
     res.status(502).json({ error: "Could not save calendar events." });
@@ -366,7 +425,7 @@ app.put("/api/events", async (req, res) => {
 app.get("/api/todos", async (req, res) => {
   if (!storageEnabled) return res.json({ enabled: false });
   try {
-    res.json({ enabled: true, todos: (await redisGetJSON("meal:todos")) || [] });
+    res.json({ enabled: true, todos: (await redisGetJSON(keyFor(req, "todos"))) || [] });
   } catch {
     res.status(502).json({ error: "Could not read the to-do list." });
   }
@@ -374,7 +433,7 @@ app.get("/api/todos", async (req, res) => {
 app.put("/api/todos", async (req, res) => {
   if (!storageEnabled) return res.json({ enabled: false });
   try {
-    await redisSetJSON("meal:todos", req.body?.todos || []);
+    await redisSetJSON(keyFor(req, "todos"), req.body?.todos || []);
     res.json({ ok: true });
   } catch {
     res.status(502).json({ error: "Could not save the to-do list." });
@@ -383,7 +442,7 @@ app.put("/api/todos", async (req, res) => {
 app.get("/api/tracker", async (req, res) => {
   if (!storageEnabled) return res.json({ enabled: false });
   try {
-    res.json({ enabled: true, tracker: (await redisGetJSON("meal:tracker")) || null });
+    res.json({ enabled: true, tracker: (await redisGetJSON(keyFor(req, "tracker"))) || null });
   } catch {
     res.status(502).json({ error: "Could not read the tracker." });
   }
@@ -391,10 +450,30 @@ app.get("/api/tracker", async (req, res) => {
 app.put("/api/tracker", async (req, res) => {
   if (!storageEnabled) return res.json({ enabled: false });
   try {
-    await redisSetJSON("meal:tracker", req.body?.tracker || {});
+    await redisSetJSON(keyFor(req, "tracker"), req.body?.tracker || {});
     res.json({ ok: true });
   } catch {
     res.status(502).json({ error: "Could not save the tracker." });
+  }
+});
+
+// Household settings (currently just the two people's names). Small shared blob
+// so the names sync across devices like everything else.
+app.get("/api/settings", async (req, res) => {
+  if (!storageEnabled) return res.json({ enabled: false });
+  try {
+    res.json({ enabled: true, settings: (await redisGetJSON(keyFor(req, "settings"))) || null });
+  } catch {
+    res.status(502).json({ error: "Could not read settings." });
+  }
+});
+app.put("/api/settings", async (req, res) => {
+  if (!storageEnabled) return res.json({ enabled: false });
+  try {
+    await redisSetJSON(keyFor(req, "settings"), req.body?.settings || {});
+    res.json({ ok: true });
+  } catch {
+    res.status(502).json({ error: "Could not save settings." });
   }
 });
 
@@ -571,9 +650,36 @@ function normalizeRecipe(r) {
 
 loadPoolFromDisk();
 
+// One-time move of the original single-household data into its namespaced home.
+// Copies meal:* → hh:{LEGACY_HOUSEHOLD_ID}:* once (guarded by a marker), never
+// deletes the originals, and never overwrites an existing destination — so it's
+// idempotent and fully reversible via the meal:* keys + a backup snapshot.
+async function migrateLegacyKeys() {
+  if (!storageEnabled) return;
+  const MARKER = "hh:migrated:v1";
+  const NAMES = ["plan", "favorites", "grocery", "notes", "tracker", "events", "todos", "settings"];
+  try {
+    if (await redisGetJSON(MARKER)) return; // already migrated
+    let moved = 0;
+    for (const name of NAMES) {
+      const legacy = await redisGetJSON(`meal:${name}`);
+      if (legacy == null) continue;
+      const dest = `hh:${LEGACY_HOUSEHOLD_ID}:${name}`;
+      if ((await redisGetJSON(dest)) != null) continue; // don't clobber existing
+      await redisSetJSON(dest, legacy);
+      moved++;
+    }
+    await redisSetJSON(MARKER, { at: new Date().toISOString(), to: LEGACY_HOUSEHOLD_ID });
+    if (moved) console.log(`  Migrated ${moved} legacy key(s) → hh:${LEGACY_HOUSEHOLD_ID}:*`);
+  } catch (e) {
+    console.warn("  Legacy migration skipped (will retry next boot):", e.message);
+  }
+}
+
 app.listen(PORT, () => {
   console.log(`\n  🍽  At-Home Meal Planner running at http://localhost:${PORT}\n`);
   if (!API_KEY || API_KEY === "your_key_here") {
     console.log("  ⚠  No API key yet. Add SPOONACULAR_API_KEY to a .env file, then restart.\n");
   }
+  migrateLegacyKeys();
 });

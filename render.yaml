@@ -9,6 +9,20 @@ services:
     buildCommand: npm install
     startCommand: npm start
     envVars:
-      # Set the actual value in the Render dashboard (Environment tab) — never commit the key.
+      # Set the actual values in the Render dashboard (Environment tab) — never commit secrets.
       - key: SPOONACULAR_API_KEY
+        sync: false
+      # Cross-device sync (Upstash Redis REST).
+      - key: UPSTASH_REDIS_REST_URL
+        sync: false
+      - key: UPSTASH_REDIS_REST_TOKEN
+        sync: false
+      # Auth: either APP_PASSCODE (single household) or HOUSEHOLDS (multi-tenant,
+      # "id:passcode,..."). Set APP_SESSION_SECRET to a long random string so
+      # sessions survive roster edits. See .env.example for details.
+      - key: APP_PASSCODE
+        sync: false
+      - key: HOUSEHOLDS
+        sync: false
+      - key: APP_SESSION_SECRET
         sync: false

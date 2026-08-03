@@ -80,6 +80,30 @@ The app uses a **dark theme**.
 
 ---
 
+## Sharing with other households
+
+The app can serve several families from one deployment, each with their own passcode
+and **completely separate** data (plans, chores, calendar, names — nothing is shared
+between households).
+
+- **Single household** (default): set `APP_PASSCODE` to lock the app behind one shared
+  passcode. Leave it blank and the app is open to anyone with the URL.
+- **Multiple households**: set `HOUSEHOLDS` to `id:passcode` pairs, comma-separated, e.g.
+  `andrew-katie:ourpass,smiths:theirpass`. Each passcode unlocks that household's own
+  data. To add a family, edit the variable and redeploy. Keep your own id as
+  `andrew-katie` so it matches your existing data. Also set `APP_SESSION_SECRET` to a
+  long random string so logins survive roster edits.
+
+Existing data is migrated automatically on first boot (from the old shared keys into
+`andrew-katie`), and the originals are left untouched as a safety net. You can also take
+a manual snapshot first with `node scripts/backup-data.mjs` (and roll back with
+`scripts/restore-data.mjs`) — both need the Upstash values in your local `.env`.
+
+Signing out (Settings tab → **Sign out**) clears the session so a different household can
+log in on the same device.
+
+---
+
 ## Notes
 - Your API key stays in `.env` on your computer and is never exposed to the browser.
 - `.env` and `node_modules` are git-ignored, so it's safe to version-control this folder.
