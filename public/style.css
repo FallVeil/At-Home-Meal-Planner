@@ -891,9 +891,9 @@ button { font-family: inherit; }
   margin-top: 4px; padding-top: 8px; border-top: 1px solid var(--line-faint);
   color: var(--muted); font-size: 0.82rem; text-align: right;
 }
+.dash-empty { color: var(--muted); font-size: 0.88rem; padding: 2px 0; }
 .dash-row { display: flex; align-items: center; gap: 10px; cursor: pointer; }
 .dash-row-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.92rem; }
-.dash-empty { color: var(--muted); font-size: 0.88rem; padding: 2px 0; }
 .recipe-row img { width: 36px; height: 36px; border-radius: 7px; object-fit: cover; background: #383b35; flex: none; }
 .dash-time { color: var(--accent); font-size: 0.8rem; font-weight: 600; flex: none; }
 .dash-due {
@@ -1482,6 +1482,20 @@ button { font-family: inherit; }
   font-size: 0.75rem;
 }
 .chore-group.collapsed .chore-items { display: none; }
+/* Optional sub-category heading nested within a room. */
+.chore-subcat {
+  display: flex; align-items: center; gap: 6px;
+  margin: 8px 0 4px; padding-left: 4px;
+  font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.04em;
+  color: var(--muted); font-weight: 600;
+}
+.chore-subcat .cat-count { font-weight: 400; text-transform: none; letter-spacing: normal; }
+/* Sub-category divider row in the history grid. */
+.hist-subcat td {
+  text-align: left; padding: 4px 6px 2px 14px;
+  font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.04em;
+  color: var(--muted); font-weight: 600;
+}
 
 /* Chore history grid */
 .history-wrap { padding-bottom: 6px; } /* fits the screen; no h-scroll so the header can stick */

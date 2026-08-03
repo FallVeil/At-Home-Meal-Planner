@@ -2892,7 +2892,17 @@ function renderChores() {
       });
       const itemsWrap = document.createElement("div");
       itemsWrap.className = "chore-items";
-      groups[cat].forEach((it) => itemsWrap.appendChild(choreRow(it)));
+      // Chores with no sub-category sit directly under the room; the rest are
+      // grouped under an optional sub-category heading.
+      const { noSub, subs, subNames } = splitBySub(groups[cat]);
+      noSub.forEach((it) => itemsWrap.appendChild(choreRow(it)));
+      subNames.forEach((sub) => {
+        const subHead = document.createElement("div");
+        subHead.className = "chore-subcat";
+        subHead.innerHTML = `${escapeHtml(sub)} <span class="cat-count">${subs[sub].length}</span>`;
+        itemsWrap.appendChild(subHead);
+        subs[sub].forEach((it) => itemsWrap.appendChild(choreRow(it)));
+      });
       section.append(header, itemsWrap);
       list.appendChild(section);
     });
@@ -2906,27 +2916,89 @@ function choreCatSort(a, b) {
   const rb = rank(b);
   return ra !== rb ? ra - rb : a.localeCompare(b);
 }
+// Split a room's chores into the ones with no sub-category (listed directly
+// under the room) and the ones grouped under an optional sub-category heading.
+function splitBySub(roomItems) {
+  const noSub = [];
+  const subs = {};
+  roomItems.forEach((it) => {
+    const s = (it.subcategory || "").trim();
+    if (s) (subs[s] ||= []).push(it);
+    else noSub.push(it);
+  });
+  const subNames = Object.keys(subs).sort((a, b) => a.localeCompare(b));
+  return { noSub, subs, subNames };
+}
+// The combined room/sub-category picker. Each selectable option is a "leaf" —
+// either a room (no sub-category) or a room + sub-category — indexed into
+// `choreCatLeaves`. `choreCatRooms` backs the per-room "＋ New sub-category…"
+// options. Both are rebuilt in lock-step here and read synchronously on submit.
+let choreCatLeaves = [];
+let choreCatRooms = [];
 function renderChoreCatOptions() {
   const sel = $("#addChoreCat");
   if (!sel) return;
-  const prev = sel.value;
-  const cats = [...new Set(tracker.items.map((it) => (it.category || "").trim()).filter(Boolean))];
-  CHORE_CAT_ORDER.forEach((c) => {
-    if (!cats.includes(c)) cats.push(c);
+  const prev = currentChoreLeaf(); // remember the current pick to restore it after rebuild
+
+  // Map each room to its existing sub-categories (plus the seeded default rooms).
+  const roomSubs = {};
+  tracker.items.forEach((it) => {
+    const c = (it.category || "").trim();
+    if (!c) return;
+    (roomSubs[c] ||= new Set());
+    const s = (it.subcategory || "").trim();
+    if (s) roomSubs[c].add(s);
   });
-  cats.sort(choreCatSort);
+  CHORE_CAT_ORDER.forEach((c) => (roomSubs[c] ||= new Set()));
+  const rooms = Object.keys(roomSubs).sort(choreCatSort);
+
+  choreCatLeaves = [];
+  choreCatRooms = rooms;
   // A native <select> works reliably on mobile (unlike an <input list> datalist);
-  // the trailing option reveals a text box for a brand-new room.
-  sel.innerHTML =
-    cats.map((c) => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join("") +
-    `<option value="__new__">＋ New room…</option>`;
-  if (prev && prev !== "__new__" && cats.includes(prev)) sel.value = prev;
+  // rooms become <optgroup>s so their sub-categories nest visually.
+  let html = "";
+  rooms.forEach((room, ri) => {
+    html += `<optgroup label="${escapeHtml(room)}">`;
+    const roomLeaf = choreCatLeaves.push({ category: room, subcategory: "" }) - 1;
+    html += `<option value="leaf:${roomLeaf}">(no sub-category)</option>`;
+    [...roomSubs[room]].sort((a, b) => a.localeCompare(b)).forEach((sub) => {
+      const li = choreCatLeaves.push({ category: room, subcategory: sub }) - 1;
+      html += `<option value="leaf:${li}">${escapeHtml(sub)}</option>`;
+    });
+    html += `<option value="newsub:${ri}">＋ New sub-category…</option></optgroup>`;
+  });
+  html += `<option value="__new_room__">＋ New room…</option>`;
+  sel.innerHTML = html;
+
+  if (prev) selectChoreLeaf(prev.category, prev.subcategory);
   syncNewChoreCat();
 }
-// Show the "new room" text box only when "＋ New room…" is picked.
+// The {category, subcategory} the picker currently points at, or null for a
+// "＋ New…" option (nothing concrete to restore).
+function currentChoreLeaf() {
+  const sel = $("#addChoreCat");
+  if (!sel) return null;
+  const v = sel.value;
+  return v.startsWith("leaf:") ? choreCatLeaves[+v.slice(5)] || null : null;
+}
+// Point the picker at an existing leaf; returns false if it no longer exists.
+function selectChoreLeaf(category, subcategory) {
+  const sel = $("#addChoreCat");
+  const i = choreCatLeaves.findIndex(
+    (l) => l.category === category && l.subcategory === (subcategory || "")
+  );
+  if (i !== -1) sel.value = "leaf:" + i;
+  return i !== -1;
+}
+// Reveal the text box (and label it) only for the "＋ New room/sub-category" options.
 function syncNewChoreCat() {
-  const isNew = $("#addChoreCat").value === "__new__";
-  $("#addChoreCatNew").classList.toggle("hidden", !isNew);
+  const v = $("#addChoreCat").value;
+  const isNewRoom = v === "__new_room__";
+  const isNewSub = v.startsWith("newsub:");
+  const box = $("#addChoreCatNew");
+  box.classList.toggle("hidden", !(isNewRoom || isNewSub));
+  if (isNewRoom) box.placeholder = "New room name";
+  else if (isNewSub) box.placeholder = `New sub-category in ${choreCatRooms[+v.slice(7)] || ""}`;
 }
 
 function renderActiveChoreView() {
@@ -3033,7 +3105,8 @@ function choreRow(item) {
 
 $("#addChoreCat").addEventListener("change", () => {
   syncNewChoreCat();
-  if ($("#addChoreCat").value === "__new__") $("#addChoreCatNew").focus();
+  const v = $("#addChoreCat").value;
+  if (v === "__new_room__" || v.startsWith("newsub:")) $("#addChoreCatNew").focus();
 });
 $("#addChoreForm").addEventListener("submit", (e) => {
   e.preventDefault();
@@ -3041,22 +3114,40 @@ $("#addChoreForm").addEventListener("submit", (e) => {
   const name = input.value.trim();
   if (!name) return;
   const catSel = $("#addChoreCat");
-  const category =
-    catSel.value === "__new__" ? $("#addChoreCatNew").value.trim() : catSel.value.trim();
+  const newBox = $("#addChoreCatNew");
+  const v = catSel.value;
+  // Resolve the picked option into a room + optional sub-category.
+  let category = "";
+  let subcategory = "";
+  let created = false; // a new room/sub-category the picker doesn't list yet
+  if (v === "__new_room__") {
+    category = newBox.value.trim();
+    created = true;
+  } else if (v.startsWith("newsub:")) {
+    category = choreCatRooms[+v.slice(7)] || "";
+    subcategory = newBox.value.trim();
+    created = true;
+  } else if (v.startsWith("leaf:")) {
+    const leaf = choreCatLeaves[+v.slice(5)] || {};
+    category = leaf.category || "";
+    subcategory = leaf.subcategory || "";
+  }
   tracker.items.push({
     id: Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
     name,
     category,
+    subcategory,
     done: { "0": {}, "1": {} },
   });
   saveTracker();
-  input.value = ""; // keep the category so you can add several to the same room
-  // If a new room was just created, make it the selected option going forward.
-  if (catSel.value === "__new__" && category) {
+  input.value = ""; // keep the category so you can add several to the same place
+  // A freshly created room/sub-category now exists — rebuild the picker and
+  // keep it selected so the next add lands in the same place.
+  if (created) {
     renderChoreCatOptions();
-    catSel.value = category;
+    selectChoreLeaf(category, subcategory);
     syncNewChoreCat();
-    $("#addChoreCatNew").value = "";
+    newBox.value = "";
   }
   renderChores();
   input.focus();
@@ -3157,21 +3248,27 @@ function renderHistory() {
   }
   head += "</thead>";
 
+  const histRow = (it) => {
+    let r = `<tr><td class="hist-name" title="${escapeHtml(it.name)}">${escapeHtml(it.name)}</td>`;
+    days.forEach((d, i) => {
+      const key = isoDate(d);
+      const isToday = key === todayKey;
+      const weekStart = isMonth && i % 7 === 0;
+      const { cls, num } = cellMarkup(personCount(it, "0", key), personCount(it, "1", key), showCount);
+      r += `<td class="hist-cell${isToday ? " today" : ""}${weekStart ? " week-start" : ""}"><span class="cell${cls ? " " + cls : ""}">${num}</span></td>`;
+    });
+    return r + `</tr>`;
+  };
   let body = `<tbody>`;
   Object.keys(groups)
     .sort(choreCatSort)
     .forEach((cat) => {
       body += `<tr class="hist-room"><td colspan="${days.length + 1}">${escapeHtml(cat || "Other")}</td></tr>`;
-      groups[cat].forEach((it) => {
-        body += `<tr><td class="hist-name" title="${escapeHtml(it.name)}">${escapeHtml(it.name)}</td>`;
-        days.forEach((d, i) => {
-          const key = isoDate(d);
-          const isToday = key === todayKey;
-          const weekStart = isMonth && i % 7 === 0;
-          const { cls, num } = cellMarkup(personCount(it, "0", key), personCount(it, "1", key), showCount);
-          body += `<td class="hist-cell${isToday ? " today" : ""}${weekStart ? " week-start" : ""}"><span class="cell${cls ? " " + cls : ""}">${num}</span></td>`;
-        });
-        body += `</tr>`;
+      const { noSub, subs, subNames } = splitBySub(groups[cat]);
+      noSub.forEach((it) => (body += histRow(it)));
+      subNames.forEach((sub) => {
+        body += `<tr class="hist-subcat"><td colspan="${days.length + 1}">${escapeHtml(sub)}</td></tr>`;
+        subs[sub].forEach((it) => (body += histRow(it)));
       });
     });
   body += `</tbody>`;
