@@ -12,8 +12,7 @@
      (rose accents, Eisenhower quadrants, danger) inherits from :root. */
   var VAR_KEYS = [
     "--bg", "--card", "--ink", "--muted", "--line", "--line-faint",
-    "--accent", "--accent-dark", "--green", "--green-dark", "--katie",
-    "--on-accent", "--on-green", "--on-katie",
+    "--accent", "--accent-dark", "--on-accent",
   ];
 
   /* ---- colour maths (all inputs/outputs are #rrggbb) ---- */
@@ -42,11 +41,11 @@
   // Readable text colour to sit on top of a filled swatch.
   function readableInk(bg) { return luminance(bg) > 0.55 ? "#20221c" : "#f7f8f4"; }
 
-  /* Expand a compact base ({bg,card,ink,accent,green,katie}) into the full
-     variable map, deriving the muted/line/dark/on-colour helpers. */
+  /* Expand a compact base ({bg,card,ink,accent}) into the full variable map,
+     deriving the muted/line/dark/on-colour helpers. Person hues (green/katie)
+     are NOT part of a theme — they're a synced household setting (see below). */
   function deriveVars(base) {
-    var bg = base.bg, card = base.card, ink = base.ink,
-        accent = base.accent, green = base.green, katie = base.katie;
+    var bg = base.bg, card = base.card, ink = base.ink, accent = base.accent;
     var dark = luminance(bg) < 0.5;
     return {
       "--bg": bg,
@@ -57,32 +56,29 @@
       "--line-faint": mix(bg, card, 0.5),
       "--accent": accent,
       "--accent-dark": darken(accent, 0.1),
-      "--green": green,
-      "--green-dark": darken(green, 0.1),
-      "--katie": katie,
       "--on-accent": readableInk(accent),
-      "--on-green": readableInk(green),
-      "--on-katie": readableInk(katie),
     };
   }
 
   /* The current palette, matching :root in style.css exactly. Used as the
      seed when the user starts customising, and as the first preset. */
-  var SAGE_BASE = {
-    bg: "#1a1b16", card: "#2e2f28", ink: "#eaece7",
-    accent: "#a6c199", green: "#4f8c62", katie: "#cf8a55",
-  };
+  var SAGE_BASE = { bg: "#1a1b16", card: "#2e2f28", ink: "#eaece7", accent: "#a6c199" };
+
+  /* Each person's colour is a HOUSEHOLD setting (synced across devices), not a
+     per-device theme choice — so both phones show the same person colours. It is
+     stored in app settings and painted via applyPersonColors(). */
+  var PERSON_DEFAULTS = { green: "#4f8c62", katie: "#cf8a55" };
 
   /* Pre-built themes. Sage is first and is the default; selecting it simply
      clears the inline overrides so the hand-tuned :root values apply. */
   var PRESETS = [
     { id: "sage",     name: "Sage",     base: SAGE_BASE },
-    { id: "midnight", name: "Midnight", base: { bg: "#14171d", card: "#232a36", ink: "#e7ecf3", accent: "#7fa8d9", green: "#57a08a", katie: "#e0956b" } },
-    { id: "plum",     name: "Plum",     base: { bg: "#1b141d", card: "#2f2531", ink: "#efe8f0", accent: "#c69bd1", green: "#6faf8a", katie: "#d98aa6" } },
-    { id: "espresso", name: "Espresso", base: { bg: "#1c1712", card: "#302620", ink: "#f0e7dc", accent: "#d8a45f", green: "#8aa96a", katie: "#cf7f63" } },
-    { id: "nocturne", name: "Nocturne", base: { bg: "#101215", card: "#1d2126", ink: "#e9edf1", accent: "#8bbcae", green: "#5f9e79", katie: "#d0885f" } },
-    { id: "rose",     name: "Rosé",     base: { bg: "#1c1618", card: "#302529", ink: "#f1e8ea", accent: "#d98aa0", green: "#6fae8f", katie: "#cf9b57" } },
-    { id: "linen",    name: "Linen",    base: { bg: "#f3f1ea", card: "#ffffff", ink: "#2c302a", accent: "#6f9e7f", green: "#4f8c62", katie: "#c9743f" } },
+    { id: "midnight", name: "Midnight", base: { bg: "#14171d", card: "#232a36", ink: "#e7ecf3", accent: "#7fa8d9" } },
+    { id: "plum",     name: "Plum",     base: { bg: "#1b141d", card: "#2f2531", ink: "#efe8f0", accent: "#c69bd1" } },
+    { id: "espresso", name: "Espresso", base: { bg: "#1c1712", card: "#302620", ink: "#f0e7dc", accent: "#d8a45f" } },
+    { id: "nocturne", name: "Nocturne", base: { bg: "#101215", card: "#1d2126", ink: "#e9edf1", accent: "#8bbcae" } },
+    { id: "rose",     name: "Rosé",     base: { bg: "#1c1618", card: "#302529", ink: "#f1e8ea", accent: "#d98aa0" } },
+    { id: "linen",    name: "Linen",    base: { bg: "#f3f1ea", card: "#ffffff", ink: "#2c302a", accent: "#6f9e7f" } },
   ];
 
   function presetById(id) {
@@ -91,7 +87,7 @@
   }
   function withDefaults(custom) {
     var out = {};
-    ["bg", "card", "ink", "accent", "green", "katie"].forEach(function (k) {
+    ["bg", "card", "ink", "accent"].forEach(function (k) {
       out[k] = (custom && /^#[0-9a-fA-F]{6}$/.test(custom[k])) ? custom[k] : SAGE_BASE[k];
     });
     return out;
@@ -128,6 +124,20 @@
 
   function apply(state) { applyVars(varsFor(state || load())); }
 
+  /* Paint the two person hues (a household setting) onto the person variables,
+     deriving the darker/readable-text helpers. Falls back to the sage defaults
+     for anything that isn't a valid #rrggbb. */
+  function applyPersonColors(green, katie) {
+    var root = document.documentElement;
+    var g = /^#[0-9a-fA-F]{6}$/.test(green || "") ? green : PERSON_DEFAULTS.green;
+    var k = /^#[0-9a-fA-F]{6}$/.test(katie || "") ? katie : PERSON_DEFAULTS.katie;
+    root.style.setProperty("--green", g);
+    root.style.setProperty("--green-dark", darken(g, 0.1));
+    root.style.setProperty("--katie", k);
+    root.style.setProperty("--on-green", readableInk(g));
+    root.style.setProperty("--on-katie", readableInk(k));
+  }
+
   // Effective compact base for the current state — seeds the custom editor.
   function baseFor(state) {
     if (state && state.mode === "custom") return withDefaults(state.custom);
@@ -138,15 +148,18 @@
   window.Theme = {
     PRESETS: PRESETS,
     SAGE_BASE: SAGE_BASE,
+    PERSON_DEFAULTS: PERSON_DEFAULTS,
     load: load,
     save: save,
     apply: apply,
+    applyPersonColors: applyPersonColors,
     baseFor: baseFor,
     deriveVars: deriveVars,
     swatchFor: function (state) {
-      // Small preview palette (used to draw the preset cards).
+      // Small preview palette (used to draw the preset cards): the four colours
+      // a theme actually controls now that person hues live in settings.
       var b = baseFor(state);
-      return [b.bg, b.accent, b.green, b.katie];
+      return [b.bg, b.card, b.accent, b.ink];
     },
   };
 

@@ -608,7 +608,10 @@ button { font-family: inherit; }
   font-size: 0.8rem;
   color: var(--muted);
 }
-.names-editor-field input {
+.name-color-row { display: flex; align-items: center; gap: 8px; }
+.names-editor-field input[type="text"] {
+  flex: 1 1 auto;
+  min-width: 0;
   padding: 9px 11px;
   background: var(--bg);
   border: 1px solid var(--line);
@@ -616,7 +619,21 @@ button { font-family: inherit; }
   color: var(--ink);
   font-size: 0.95rem;
 }
-.names-editor-field input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.names-editor-field input[type="text"]:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* Round colour chip sitting beside each person's name (household-synced hue). */
+.person-color {
+  flex: none;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: none;
+  cursor: pointer;
+}
+.person-color::-webkit-color-swatch-wrapper { padding: 2px; }
+.person-color::-webkit-color-swatch { border: none; border-radius: 50%; }
+.person-color::-moz-color-swatch { border: none; border-radius: 50%; }
 .names-editor-actions {
   display: flex;
   gap: 8px;
@@ -683,7 +700,9 @@ button { font-family: inherit; }
 .custom-theme { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
 .custom-swatches {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  /* min(100%, …) keeps a column from ever exceeding the card width, so the row
+     can't spill past the card on narrow (phone) layouts. */
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr));
   gap: 10px;
   margin: 10px 0 14px;
 }
@@ -691,12 +710,13 @@ button { font-family: inherit; }
   display: flex;
   align-items: center;
   gap: 10px;
+  min-width: 0;
   padding: 8px 10px;
   background: var(--bg);
   border: 1px solid var(--line);
   border-radius: 9px;
 }
-.swatch-row label { flex: 1 1 auto; font-size: 0.85rem; color: var(--ink); cursor: pointer; }
+.swatch-row label { flex: 1 1 auto; min-width: 0; font-size: 0.85rem; color: var(--ink); cursor: pointer; }
 .swatch-row .swatch-hex { font-size: 0.72rem; color: var(--muted); font-variant-numeric: tabular-nums; }
 /* Native colour wheel, styled to a tidy round chip */
 .swatch-row input[type="color"] {
@@ -1750,21 +1770,42 @@ button { font-family: inherit; }
 /* Edit-mode reorder / delete controls on a category header (hidden otherwise). */
 .chore-cat-edit { display: none; align-items: center; gap: 2px; }
 #choreChecklist.editing .chore-cat-edit { display: inline-flex; }
-.cat-move, .cat-del {
+.cat-del {
   width: 22px; height: 22px;
   border: 1px solid var(--line);
   background: transparent;
-  color: var(--muted);
+  color: var(--danger);
   border-radius: 6px;
   font-size: 0.7rem; line-height: 1;
   cursor: pointer;
   display: inline-flex; align-items: center; justify-content: center;
   padding: 0;
 }
-.cat-move:hover:not(:disabled) { color: var(--accent); border-color: var(--accent); }
-.cat-move:disabled { opacity: 0.3; cursor: default; }
-.cat-del { color: var(--danger); }
 .cat-del:hover { border-color: var(--danger); }
+/* Drag-to-reorder handle (categories + chores). Shown only in Edit mode; phone-
+   first pointer drag, so touch-action:none keeps a grab from scrolling the page. */
+.drag-handle {
+  display: none;
+  flex: none;
+  width: 24px; height: 24px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  cursor: grab;
+  align-items: center; justify-content: center;
+  touch-action: none;
+  -webkit-user-select: none; user-select: none;
+}
+.drag-handle:hover { color: var(--accent); }
+.drag-handle:active { cursor: grabbing; }
+#choreChecklist.editing .drag-handle { display: inline-flex; }
+/* The item currently being dragged: lifted and highlighted. */
+.chore-item.drag-active, .chore-group.drag-active {
+  opacity: 0.9;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.38);
+}
+.chore-item.drag-active { border-color: var(--accent); }
 /* Quiet text links to add a sub-category (nested) or a top-level category. */
 .chore-add-sub, .chore-add-cat {
   display: inline-block;
@@ -2023,105 +2064,26 @@ button { font-family: inherit; }
 #choreChecklist.editing .chore-del { display: inline-flex; }
 .chore-del:hover { color: var(--danger); opacity: 0.75; }
 
-/* ---- Assigned board (per-person columns + an unassigned pool) ---- */
-.assigned-hint { color: var(--muted); font-size: 0.82rem; margin: 0 0 12px; }
-.assigned-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-.assigned-col {
-  background: var(--card);
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  padding: 8px;
-  box-shadow: var(--shadow);
-  min-width: 0;
-}
-.assigned-col.col-a { border-top: 3px solid var(--green); }
-.assigned-col.col-k { border-top: 3px solid var(--katie); }
-.assigned-col-head {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 2px 2px 8px;
-  font-weight: 700;
-  font-size: 0.9rem;
-}
-.assigned-col-head .pbubble { width: 20px; height: 20px; font-size: 0.66rem; flex: none; }
-.assigned-col-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.assigned-col-head .cat-count { margin-left: auto; }
-.assigned-col-body { display: flex; flex-direction: column; gap: 6px; }
-.assigned-empty { color: var(--muted); font-size: 0.78rem; padding: 6px 2px; }
-.assigned-row {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  background: var(--bg);
-  border: 1px solid var(--line);
-  border-radius: 9px;
-  padding: 6px 7px;
-}
-.assigned-name { flex: 1 1 auto; min-width: 0; font-size: 0.86rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.assigned-row.done .assigned-name { text-decoration: line-through; color: var(--ink); opacity: 0.66; text-decoration-thickness: 1px; }
-.assigned-check {
-  flex: none;
-  width: 22px;
-  height: 22px;
-  border-radius: 6px;
-  border: 1.5px solid var(--line);
-  background: transparent;
-  color: #fff;
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  touch-action: manipulation;
-}
-.assigned-check.on.a { background: var(--green); border-color: var(--green); }
-.assigned-check.on.k { background: var(--katie); border-color: var(--katie); }
-.assigned-actions { display: flex; align-items: center; gap: 4px; flex: none; }
-.assigned-move,
-.assigned-unassign,
-.assign-to {
-  border: 1.5px solid var(--line);
-  background: transparent;
-  color: var(--muted);
-  border-radius: 6px;
-  min-width: 24px;
-  height: 24px;
-  padding: 0 5px;
-  font-size: 0.72rem;
-  font-weight: 700;
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  touch-action: manipulation;
-}
-.assigned-move:hover,
-.assigned-unassign:hover,
-.assign-to:hover { border-color: currentColor; }
-.assign-to.a { color: var(--green); }
-.assign-to.k { color: var(--katie); }
-.assigned-unassign { color: var(--danger); }
-.assigned-unassigned { margin-top: 16px; }
-.assigned-un-head {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-family: var(--font-display);
-  font-size: 0.98rem;
-  font-weight: 600;
-  margin-bottom: 8px;
-}
-.assigned-un-group { margin-bottom: 10px; }
-.assigned-un-cat {
-  font-size: 0.72rem;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--muted);
-  margin: 4px 0 5px;
-}
-.assigned-un-group .assigned-row { margin-bottom: 6px; }
+/* ---- Assign mode: a temporary checklist state (toggled like Edit). Each chore's
+   existing A/K buttons fill with the person's colour to set whose job it is, and a
+   thin coloured stripe on the row shows the assignee at a glance in every mode. --- */
+.pbtn.assign-on.a { background: var(--green); border-color: var(--green); color: var(--on-green); }
+.pbtn.assign-on.k { background: var(--katie); border-color: var(--katie); color: var(--on-katie); }
+.chore-item[data-assignee="0"] { box-shadow: inset 3px 0 0 0 var(--green), var(--shadow); }
+.chore-item[data-assignee="1"] { box-shadow: inset 3px 0 0 0 var(--katie), var(--shadow); }
+/* While assigning, dim the completion pips/streaks so the buttons read as the
+   action rather than as today's tally — and stop the pips taking taps meant for
+   assignment. */
+#choreChecklist.assigning .chore-marks,
+#choreChecklist.assigning .chore-tags { opacity: 0.4; pointer-events: none; }
 
-/* Quiet text button (the checklist "Edit" toggle). */
+/* Contextual hint shown above the list while a temporary mode is active. */
+.chore-mode-hint { display: none; color: var(--muted); font-size: 0.82rem; margin: 0 0 12px; }
+#choreChecklist.assigning .chore-mode-hint[data-mode="assign"],
+#choreChecklist.editing .chore-mode-hint[data-mode="edit"] { display: block; }
+
+/* Quiet text buttons in the section head (the checklist "Assign" / "Edit" toggles). */
+.chore-tools { display: flex; align-items: center; gap: 2px; }
 .linkish {
   background: transparent;
   border: none;

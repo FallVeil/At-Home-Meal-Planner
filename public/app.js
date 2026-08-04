@@ -105,6 +105,9 @@ function setFavNote(id, text) {
 // ---- Household settings (people's names) — synced like the other data ----
 const SETTINGS_KEY = "mealPlanner.settings.v1";
 const DEFAULT_PEOPLE = ["Andrew", "Katie"];
+// Each person's colour is household-synced (both phones match), unlike the
+// per-device colour theme. Defaults mirror --green / --katie in style.css.
+const DEFAULT_COLORS = ["#4f8c62", "#cf8a55"];
 let settings = loadSettings();
 let settingsPushTimer = null;
 function loadSettings() {
@@ -114,16 +117,25 @@ function loadSettings() {
   } catch {
     /* ignore */
   }
-  return { people: [...DEFAULT_PEOPLE] };
+  return { people: [...DEFAULT_PEOPLE], colors: [...DEFAULT_COLORS] };
 }
-// Always end up with exactly two non-empty names (data model is index-based).
+// Always end up with exactly two non-empty names + two valid #rrggbb colours
+// (data model is index-based).
 function normalizeSettings(s) {
   const p = Array.isArray(s.people) ? s.people : [];
   const people = [0, 1].map((i) => {
     const name = typeof p[i] === "string" ? p[i].trim() : "";
     return name || DEFAULT_PEOPLE[i];
   });
-  return { people };
+  const c = Array.isArray(s.colors) ? s.colors : [];
+  const colors = [0, 1].map((i) => {
+    const v = typeof c[i] === "string" ? c[i].trim().toLowerCase() : "";
+    return /^#[0-9a-f]{6}$/.test(v) ? v : DEFAULT_COLORS[i];
+  });
+  return { people, colors };
+}
+function personColor(i) {
+  return (settings.colors && settings.colors[i]) || DEFAULT_COLORS[i];
 }
 function saveSettings() {
   localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
@@ -164,7 +176,16 @@ function applyPeopleLabels() {
     });
     const input = document.getElementById("nameInput" + i);
     if (input && document.activeElement !== input) input.value = personName(i);
+    const color = document.getElementById("colorInput" + i);
+    if (color && document.activeElement !== color) color.value = personColor(i);
   });
+  applyPersonColors(); // keep the synced person hues painted (fires on every refresh)
+}
+// Paint the household's two person colours onto the CSS person variables.
+function applyPersonColors() {
+  if (window.Theme && window.Theme.applyPersonColors) {
+    window.Theme.applyPersonColors(personColor(0), personColor(1));
+  }
 }
 
 // ---- Cross-device sync (active only when the server has shared storage) ----
@@ -3427,6 +3448,8 @@ function renderChoreCategory(catObj, idx, roomChores) {
   const collapsed = choreCollapsed.has(cat);
   const section = document.createElement("div");
   section.className = "chore-group" + (collapsed ? " collapsed" : "");
+  section.dataset.cat = cat;
+  section.dataset.dragkey = cat; // for drag-to-reorder
 
   const header = document.createElement("h3");
   header.className = "chore-cat";
@@ -3438,7 +3461,8 @@ function renderChoreCategory(catObj, idx, roomChores) {
   // Right-side controls: Edit-mode reorder/delete + the subtle quick-add "+".
   const actions = document.createElement("span");
   actions.className = "chore-cat-actions";
-  actions.appendChild(choreCatEditControls(idx, catObj, roomChores.length));
+  const editControls = choreCatEditControls(catObj, roomChores.length);
+  actions.appendChild(editControls);
   actions.appendChild(
     choreAddMini(`Add a chore to ${cat}`, () => {
       choreCollapsed.delete(cat);
@@ -3506,6 +3530,10 @@ function renderChoreCategory(catObj, idx, roomChores) {
   }
 
   section.append(header, itemsWrap);
+  // Drag the whole category (via its handle) to reorder among the other categories.
+  bindDragSort(section, editControls.querySelector(".drag-handle"), ".chore-group[data-cat]", (keys) =>
+    reorderCats(keys)
+  );
   return section;
 }
 function toggleCollapse(key) {
@@ -3583,38 +3611,106 @@ function addCategory(name) {
   choreAdd = { kind: "roomChore", cat: name }; // roll straight into adding chores to it
   renderChores();
 }
-// Edit-mode controls on a category header: reorder up/down + delete.
-function choreCatEditControls(idx, catObj, count) {
+// Edit-mode controls on a category header: a drag handle (reorder) + delete.
+function choreCatEditControls(catObj, count) {
   const wrap = document.createElement("span");
   wrap.className = "chore-cat-edit";
-  const mk = (cls, label, title, onClick) => {
-    const b = document.createElement("button");
-    b.type = "button";
-    b.className = cls;
-    b.textContent = label;
-    b.title = title;
-    b.setAttribute("aria-label", title);
-    b.addEventListener("click", (e) => {
-      e.stopPropagation();
-      onClick();
-    });
-    return b;
-  };
-  const up = mk("cat-move", "▲", "Move up", () => moveCategory(idx, -1));
-  const down = mk("cat-move", "▼", "Move down", () => moveCategory(idx, 1));
-  if (idx === 0) up.disabled = true;
-  if (idx === tracker.cats.length - 1) down.disabled = true;
-  const del = mk("cat-del", "✕", count ? "Delete category and its chores" : "Delete category", () =>
-    deleteCategory(catObj, count)
-  );
-  wrap.append(up, down, del);
+  const del = document.createElement("button");
+  del.type = "button";
+  del.className = "cat-del";
+  del.textContent = "✕";
+  del.title = count ? "Delete category and its chores" : "Delete category";
+  del.setAttribute("aria-label", del.title);
+  del.addEventListener("click", (e) => {
+    e.stopPropagation();
+    deleteCategory(catObj, count);
+  });
+  wrap.append(dragHandle("Drag to reorder categories"), del);
   return wrap;
 }
-function moveCategory(idx, dir) {
-  const j = idx + dir;
-  if (j < 0 || j >= tracker.cats.length) return;
-  const arr = tracker.cats;
-  [arr[idx], arr[j]] = [arr[j], arr[idx]];
+// A six-dot grip used to start a drag-to-reorder gesture (shown only in Edit
+// mode). It's a real button so it's focusable, but its main job is to be grabbed.
+function dragHandle(title) {
+  const h = document.createElement("button");
+  h.type = "button";
+  h.className = "drag-handle";
+  h.title = title || "Drag to reorder";
+  h.setAttribute("aria-label", h.title);
+  h.innerHTML = `<svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" fill="currentColor"><circle cx="7" cy="4" r="1.5"/><circle cx="13" cy="4" r="1.5"/><circle cx="7" cy="10" r="1.5"/><circle cx="13" cy="10" r="1.5"/><circle cx="7" cy="16" r="1.5"/><circle cx="13" cy="16" r="1.5"/></svg>`;
+  h.addEventListener("click", (e) => e.stopPropagation()); // grabbing ≠ toggling the header
+  return h;
+}
+// Pointer-based drag-to-reorder for one item within its container. Phone-first:
+// native HTML5 drag doesn't work on touch, so we use pointer events + capture.
+// While dragging, the siblings reflow live under the finger; on drop we read the
+// new order of `data-dragkey`s and hand it to onDrop (only if it actually moved).
+function bindDragSort(item, handle, itemSel, onDrop) {
+  if (!handle) return;
+  handle.addEventListener("pointerdown", (e) => {
+    if (e.pointerType === "mouse" && e.button !== 0) return;
+    const container = item.parentElement;
+    if (!container) return;
+    e.preventDefault();
+    e.stopPropagation();
+    try { handle.setPointerCapture(e.pointerId); } catch (_) {}
+    item.classList.add("drag-active");
+    const orderKeys = () =>
+      [...container.children].filter((c) => c.matches(itemSel)).map((c) => c.dataset.dragkey);
+    const initial = orderKeys().join("|");
+
+    const onMove = (ev) => {
+      ev.preventDefault();
+      const y = ev.clientY;
+      const sibs = [...container.children].filter((c) => c !== item && c.matches(itemSel));
+      let target = null;
+      for (const s of sibs) {
+        const r = s.getBoundingClientRect();
+        if (y < r.top + r.height / 2) { target = s; break; }
+      }
+      if (target) container.insertBefore(item, target);
+      else {
+        const last = sibs[sibs.length - 1]; // drop at the end of the group
+        if (last && last.nextSibling !== item) container.insertBefore(item, last.nextSibling);
+      }
+    };
+    const finish = (ev) => {
+      handle.removeEventListener("pointermove", onMove);
+      handle.removeEventListener("pointerup", finish);
+      handle.removeEventListener("pointercancel", finish);
+      item.classList.remove("drag-active");
+      try { handle.releasePointerCapture(ev.pointerId); } catch (_) {}
+      const keys = orderKeys();
+      if (keys.join("|") !== initial) onDrop(keys);
+    };
+    handle.addEventListener("pointermove", onMove);
+    handle.addEventListener("pointerup", finish);
+    handle.addEventListener("pointercancel", finish);
+  });
+}
+// Reorder the category spine to match the dropped order of category names.
+function reorderCats(orderedNames) {
+  const byName = {};
+  tracker.cats.forEach((c) => { byName[c.name] = c; });
+  const next = [];
+  orderedNames.forEach((n) => { if (byName[n] && !next.includes(byName[n])) next.push(byName[n]); });
+  tracker.cats.forEach((c) => { if (!next.includes(c)) next.push(c); }); // safety: keep any stragglers
+  tracker.cats = next;
+  saveTracker();
+  renderChores();
+}
+// Reorder chores *within one group* (same category + sub-category). `tracker.items`
+// is a flat list, so we only permute the slots this group's ids occupy, leaving
+// every other chore exactly where it was.
+function reorderItemsWithin(orderedIds) {
+  const idSet = new Set(orderedIds);
+  const slots = [];
+  const byId = {};
+  tracker.items.forEach((it, i) => {
+    if (idSet.has(it.id)) { slots.push(i); byId[it.id] = it; }
+  });
+  orderedIds.forEach((id, k) => {
+    if (byId[id] && slots[k] != null) tracker.items[slots[k]] = byId[id];
+  });
   saveTracker();
   renderChores();
 }
@@ -3649,163 +3745,93 @@ function splitBySub(roomItems) {
 }
 function renderActiveChoreView() {
   const isList = choreViewMode === "list";
-  $("#choreEdit").classList.toggle("hidden", !isList); // "Edit" only applies to the checklist
-  if (!isList) {
-    $("#choreChecklist").classList.remove("editing");
-    $("#choreEdit").classList.remove("on");
-    $("#choreEdit").textContent = "Edit";
-  }
+  // "Edit" and "Assign" only apply to the checklist.
+  $("#choreEdit").classList.toggle("hidden", !isList);
+  $("#choreAssign").classList.toggle("hidden", !isList);
+  if (!isList) exitChoreModes();
   if (choreViewMode === "history") renderHistory();
-  else if (choreViewMode === "assigned") renderAssigned();
   else renderChores();
 }
-
-// ---- Assigned board: chores split into a column per person, plus an
-// "unassigned" pool. Assigning is done here; each assigned chore can be checked
-// off (a completion by that person for today), reassigned, or unassigned.
-function checkGlyph() {
-  return `<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`;
+// Leave any temporary checklist mode (Edit / Assign) and reset the toggle buttons.
+function exitChoreModes() {
+  $("#choreChecklist").classList.remove("editing", "assigning");
+  updateChoreModeButtons();
 }
-function setChoreAssignee(id, val) {
-  const item = tracker.items.find((x) => x.id === id);
-  if (!item) return;
-  item.assignee = val === "0" || val === "1" ? val : "";
-  saveTracker();
-  renderAssigned();
-}
-function clearChoreToday(item, p) {
-  const key = isoDate(new Date());
-  if (item.done && item.done[p] && item.done[p][key]) {
-    delete item.done[p][key];
-    saveTracker();
-  }
-}
-function assignedRow(item, pi) {
-  const p = String(pi);
-  const other = pi === 0 ? 1 : 0;
-  const today = isoDate(new Date());
-  const doneN = personCount(item, p, today);
-  const cls = pi === 0 ? "a" : "k";
-  const row = document.createElement("div");
-  row.className = "assigned-row" + (doneN > 0 ? " done" : "");
-  row.innerHTML = `
-    <button type="button" class="assigned-check ${cls}${doneN > 0 ? " on" : ""}" aria-label="Mark done today">${doneN > 0 ? checkGlyph() : ""}</button>
-    <span class="assigned-name">${escapeHtml(item.name)}</span>
-    <span class="assigned-actions">
-      <button type="button" class="assigned-move" title="Move to ${escapeHtml(personName(other))}" aria-label="Move to ${escapeHtml(personName(other))}">→${escapeHtml(personInitial(other))}</button>
-      <button type="button" class="assigned-unassign" title="Unassign" aria-label="Unassign">✕</button>
-    </span>`;
-  row.querySelector(".assigned-check").addEventListener("click", () => {
-    if (doneN > 0) clearChoreToday(item, p);
-    else incPersonDate(item, p, today);
-    renderAssigned();
-  });
-  row.querySelector(".assigned-move").addEventListener("click", () => setChoreAssignee(item.id, String(other)));
-  row.querySelector(".assigned-unassign").addEventListener("click", () => setChoreAssignee(item.id, ""));
-  return row;
-}
-function unassignedRow(item) {
-  const row = document.createElement("div");
-  row.className = "assigned-row unassigned-row";
-  row.innerHTML = `
-    <span class="assigned-name">${escapeHtml(item.name)}</span>
-    <span class="assigned-actions">
-      <button type="button" class="assign-to a" title="Assign to ${escapeHtml(personName(0))}" aria-label="Assign to ${escapeHtml(personName(0))}">${escapeHtml(personInitial(0))}</button>
-      <button type="button" class="assign-to k" title="Assign to ${escapeHtml(personName(1))}" aria-label="Assign to ${escapeHtml(personName(1))}">${escapeHtml(personInitial(1))}</button>
-    </span>`;
-  row.querySelector(".assign-to.a").addEventListener("click", () => setChoreAssignee(item.id, "0"));
-  row.querySelector(".assign-to.k").addEventListener("click", () => setChoreAssignee(item.id, "1"));
-  return row;
-}
-function renderAssigned() {
-  const cols = $("#assignedCols");
-  const unWrap = $("#assignedUnassigned");
-  if (!cols || !unWrap) return;
-  cols.innerHTML = "";
-  unWrap.innerHTML = "";
-
-  // One column per person.
-  [0, 1].forEach((pi) => {
-    const p = String(pi);
-    const mine = tracker.items.filter((it) => it.assignee === p);
-    const col = document.createElement("div");
-    col.className = "assigned-col " + (pi === 0 ? "col-a" : "col-k");
-    col.innerHTML =
-      `<div class="assigned-col-head"><span class="pbubble ${pi === 0 ? "a" : "k"}">${escapeHtml(personInitial(pi))}</span>` +
-      `<span class="assigned-col-name">${escapeHtml(personName(pi))}</span><span class="cat-count">${mine.length}</span></div>`;
-    const body = document.createElement("div");
-    body.className = "assigned-col-body";
-    if (!mine.length) {
-      const e = document.createElement("div");
-      e.className = "assigned-empty";
-      e.textContent = "No chores assigned.";
-      body.appendChild(e);
-    } else {
-      mine.forEach((it) => body.appendChild(assignedRow(it, pi)));
-    }
-    col.appendChild(body);
-    cols.appendChild(col);
-  });
-
-  // The unassigned pool, grouped by room.
-  const un = tracker.items.filter((it) => it.assignee !== "0" && it.assignee !== "1");
-  const head = document.createElement("div");
-  head.className = "assigned-un-head";
-  head.innerHTML = `Unassigned <span class="cat-count">${un.length}</span>`;
-  unWrap.appendChild(head);
-  if (!un.length) {
-    const e = document.createElement("div");
-    e.className = "assigned-empty";
-    e.textContent = "Everything's assigned.";
-    unWrap.appendChild(e);
-    return;
-  }
-  const groups = {};
-  un.forEach((it) => {
-    const c = (it.category || "").trim();
-    (groups[c] ||= []).push(it);
-  });
-  Object.keys(groups)
-    .sort(choreCatSort)
-    .forEach((cat) => {
-      const g = document.createElement("div");
-      g.className = "assigned-un-group";
-      g.innerHTML = `<div class="assigned-un-cat">${escapeHtml(cat || "Other")}</div>`;
-      groups[cat].forEach((it) => g.appendChild(unassignedRow(it)));
-      unWrap.appendChild(g);
-    });
-}
-
-$("#choreEdit").addEventListener("click", () => {
-  const editing = $("#choreChecklist").classList.toggle("editing");
+function updateChoreModeButtons() {
+  const cl = $("#choreChecklist").classList;
+  const editing = cl.contains("editing");
+  const assigning = cl.contains("assigning");
   $("#choreEdit").classList.toggle("on", editing);
   $("#choreEdit").textContent = editing ? "Done" : "Edit";
+  $("#choreAssign").classList.toggle("on", assigning);
+  $("#choreAssign").textContent = assigning ? "Done" : "Assign";
+}
+
+// ---- Assign mode: a temporary state on the checklist (toggled like Edit). While
+// it's on, the two A/K buttons already on each chore assign that chore to a person
+// (instead of logging a completion). Tap the assigned person again to unassign. ----
+function toggleAssignee(item, p) {
+  item.assignee = item.assignee === p ? "" : p;
+  saveTracker();
+  renderChores(); // repaint bubble fills + the assignee stripe
+}
+
+// Edit and Assign are mutually-exclusive temporary modes over the checklist; each
+// re-renders the rows so the A/K buttons pick up the right behaviour and visuals.
+$("#choreEdit").addEventListener("click", () => {
+  const cl = $("#choreChecklist").classList;
+  const willEdit = !cl.contains("editing");
+  cl.toggle("editing", willEdit);
+  if (willEdit) cl.remove("assigning");
+  updateChoreModeButtons();
+  renderChores();
+});
+$("#choreAssign").addEventListener("click", () => {
+  const cl = $("#choreChecklist").classList;
+  const willAssign = !cl.contains("assigning");
+  cl.toggle("assigning", willAssign);
+  if (willAssign) cl.remove("editing");
+  updateChoreModeButtons();
+  renderChores();
 });
 
-// ---- People's names editor (Settings tab) ----
+// ---- People's names + colours editor (Settings tab). Names and the two person
+// colours are one household-synced blob. ----
 function saveNamesEditor() {
-  settings = normalizeSettings({ people: [$("#nameInput0").value, $("#nameInput1").value] });
+  settings = normalizeSettings({
+    people: [$("#nameInput0").value, $("#nameInput1").value],
+    colors: [$("#colorInput0").value, $("#colorInput1").value],
+  });
   saveSettings();
-  applyPeopleLabels(); // refresh the inputs, calendar legend and event pickers
+  applyPeopleLabels(); // refresh the inputs/pickers and repaint the person colours
   renderActiveChoreView();
   renderCalendarIfActive();
-  toast("Names saved");
+  toast("Household saved");
 }
 $("#namesEditor").addEventListener("submit", (e) => {
   e.preventDefault();
   saveNamesEditor();
 });
+// Live preview while dragging a person's colour wheel; commit + sync on release.
+[0, 1].forEach((i) => {
+  const input = document.getElementById("colorInput" + i);
+  if (!input) return;
+  input.addEventListener("input", () => {
+    if (window.Theme) window.Theme.applyPersonColors($("#colorInput0").value, $("#colorInput1").value);
+  });
+  input.addEventListener("change", () => saveNamesEditor());
+});
 
 // ---- Colour-theme editor (Settings tab) ----
 // State lives in window.Theme (theme.js); it is a per-device preference and is
 // NOT synced. This just renders the picker and forwards changes to Theme.apply.
+// (The two person colours are a separate, household-synced setting — edited up
+// in the names editor, not here.)
 const CUSTOM_ROLES = [
   { key: "bg", label: "Background" },
   { key: "card", label: "Cards" },
   { key: "ink", label: "Text" },
   { key: "accent", label: "Accent" },
-  { key: "green", label: () => personName(0) }, // person 1's colour
-  { key: "katie", label: () => personName(1) }, // person 2's colour
 ];
 
 function renderThemeEditor() {
@@ -3815,7 +3841,7 @@ function renderThemeEditor() {
   const activeId = state.mode === "custom" ? "custom" : state.preset || "sage";
 
   // Build one card per preset, plus a "Custom" card at the end.
-  const cards = window.Theme.PRESETS.map((p) => ({ id: p.id, name: p.name, swatch: [p.base.bg, p.base.accent, p.base.green, p.base.katie] }));
+  const cards = window.Theme.PRESETS.map((p) => ({ id: p.id, name: p.name, swatch: [p.base.bg, p.base.card, p.base.accent, p.base.ink] }));
   cards.push({ id: "custom", name: "Custom", swatch: window.Theme.swatchFor(state.mode === "custom" ? state : { mode: "custom", custom: window.Theme.baseFor(state) }) });
 
   grid.innerHTML = cards
@@ -3915,14 +3941,24 @@ $("#signOutBtn").addEventListener("click", async () => {
 function choreRow(item) {
   const row = document.createElement("div");
   const done = choreDoneToday(item);
-  row.className = "chore-item" + (done ? " done" : "");
+  const assigning = $("#choreChecklist").classList.contains("assigning");
+  const assignee = item.assignee === "0" || item.assignee === "1" ? item.assignee : "";
+  row.className = "chore-item" + (done ? " done" : "") + (assigning ? " assign-mode" : "");
+  row.dataset.assignee = assignee; // drives the coloured "whose job" stripe
   const today = isoDate(new Date());
   const streak = choreStreak(item);
   const aN = personCount(item, "0", today);
   const kN = personCount(item, "1", today);
   // `cls` (a/k) drives the person's color; `letter` is just the displayed initial.
-  const pbtn = (p, cls, letter, name, n) =>
-    `<button type="button" class="pbtn ${cls}${n > 0 ? " on" : ""}" data-p="${p}" aria-label="${escapeHtml(name)} did this${n > 1 ? " (" + n + "×)" : ""}" title="${escapeHtml(name)} — tap to add, hold to remove">${escapeHtml(letter)}</button>`;
+  // In Assign mode the same buttons pick who the chore belongs to (filled = theirs).
+  const pbtn = (p, cls, letter, name, n) => {
+    if (assigning) {
+      const on = assignee === p;
+      const t = on ? `Assigned to ${name} — tap to unassign` : `Assign to ${name}`;
+      return `<button type="button" class="pbtn ${cls}${on ? " assign-on" : ""}" data-p="${p}" aria-pressed="${on}" aria-label="${escapeHtml(t)}" title="${escapeHtml(t)}">${escapeHtml(letter)}</button>`;
+    }
+    return `<button type="button" class="pbtn ${cls}${n > 0 ? " on" : ""}" data-p="${p}" aria-label="${escapeHtml(name)} did this${n > 1 ? " (" + n + "×)" : ""}" title="${escapeHtml(name)} — tap to add, hold to remove">${escapeHtml(letter)}</button>`;
+  };
   row.innerHTML = `
     <div class="chore-people">
       ${pbtn("0", "a", personInitial(0), personName(0), aN)}
@@ -3942,17 +3978,22 @@ function choreRow(item) {
     <button class="chore-del" aria-label="Delete">✕</button>`;
   row.querySelectorAll(".pbtn").forEach((btn) => {
     const p = btn.dataset.p;
-    bindCount(
-      btn,
-      () => {
-        incPersonDate(item, p, today);
-        renderChores();
-      },
-      () => {
-        decPersonDate(item, p, today);
-        renderChores();
-      }
-    );
+    if (assigning) {
+      // Assign mode: a plain tap assigns/unassigns — no completion logging.
+      btn.addEventListener("click", () => toggleAssignee(item, p));
+    } else {
+      bindCount(
+        btn,
+        () => {
+          incPersonDate(item, p, today);
+          renderChores();
+        },
+        () => {
+          decPersonDate(item, p, today);
+          renderChores();
+        }
+      );
+    }
   });
   // Click a filled box to remove that completion (green = Andrew, rose = Katie).
   row.querySelectorAll(".chore-marks .pip").forEach((pip) => {
@@ -3967,6 +4008,11 @@ function choreRow(item) {
     saveTracker();
     renderChores();
   });
+  // Drag handle (Edit mode) to reorder this chore within its group.
+  row.dataset.dragkey = item.id;
+  const handle = dragHandle("Drag to reorder chore");
+  row.insertBefore(handle, row.firstChild);
+  bindDragSort(row, handle, ".chore-item", (keys) => reorderItemsWithin(keys));
   return row;
 }
 
@@ -3975,7 +4021,6 @@ document.querySelectorAll("#choreView .chip").forEach((btn) => {
     choreViewMode = btn.dataset.view;
     document.querySelectorAll("#choreView .chip").forEach((b) => b.classList.toggle("active", b === btn));
     $("#choreChecklist").classList.toggle("hidden", choreViewMode !== "list");
-    $("#choreAssigned").classList.toggle("hidden", choreViewMode !== "assigned");
     $("#choreHistory").classList.toggle("hidden", choreViewMode !== "history");
     renderActiveChoreView();
   });

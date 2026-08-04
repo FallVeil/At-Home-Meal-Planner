@@ -265,23 +265,22 @@
       <section id="tab-chores" class="panel">
         <div class="section-head">
           <h2>Chores &amp; habits</h2>
-          <button id="choreEdit" class="linkish" type="button">Edit</button>
+          <div class="chore-tools">
+            <button id="choreAssign" class="linkish" type="button">Assign</button>
+            <button id="choreEdit" class="linkish" type="button">Edit</button>
+          </div>
         </div>
         <div class="chip-row" id="choreView">
           <button type="button" class="chip active" data-view="list">Checklist</button>
-          <button type="button" class="chip" data-view="assigned">Assigned</button>
           <button type="button" class="chip" data-view="history">History</button>
         </div>
         <div id="choreChecklist">
+          <p class="chore-mode-hint" data-mode="assign">Tap a person's letter on a chore to assign it to them. Tap again to unassign.</p>
+          <p class="chore-mode-hint" data-mode="edit">Drag the handle to reorder, or use ✕ to delete. Tap Done when finished.</p>
           <div id="choreList"></div>
           <div id="choreEmpty" class="empty">
             No categories yet. Add one below to start tracking.
           </div>
-        </div>
-        <div id="choreAssigned" class="hidden">
-          <p class="assigned-hint">Assign chores to each person, then check them off as they're done today.</p>
-          <div id="assignedCols" class="assigned-cols"></div>
-          <div id="assignedUnassigned" class="assigned-unassigned"></div>
         </div>
         <div id="choreHistory" class="hidden">
           <div class="chip-row" id="historyRange">
@@ -298,15 +297,21 @@
           <h2>Settings</h2>
         </div>
         <form id="namesEditor" class="names-editor">
-          <p class="names-editor-hint">Who's in your household? These names show on chores and the calendar.</p>
+          <p class="names-editor-hint">Who's in your household? These names and colours show on chores and the calendar, and sync across your devices.</p>
           <label class="names-editor-field">Person 1
-            <input id="nameInput0" type="text" maxlength="20" autocomplete="off" spellcheck="false" />
+            <div class="name-color-row">
+              <input id="nameInput0" type="text" maxlength="20" autocomplete="off" spellcheck="false" />
+              <input id="colorInput0" type="color" class="person-color" aria-label="Person 1 colour" title="Person 1 colour" />
+            </div>
           </label>
           <label class="names-editor-field">Person 2
-            <input id="nameInput1" type="text" maxlength="20" autocomplete="off" spellcheck="false" />
+            <div class="name-color-row">
+              <input id="nameInput1" type="text" maxlength="20" autocomplete="off" spellcheck="false" />
+              <input id="colorInput1" type="color" class="person-color" aria-label="Person 2 colour" title="Person 2 colour" />
+            </div>
           </label>
           <div class="names-editor-actions">
-            <button type="submit" id="namesSave" class="primary">Save names</button>
+            <button type="submit" id="namesSave" class="primary">Save</button>
           </div>
         </form>
 
