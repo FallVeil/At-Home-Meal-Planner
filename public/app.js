@@ -541,6 +541,7 @@ function activateTab(name, fromHistory = false) {
   }
   if (name === "settings") {
     applyPeopleLabels(); // fill the name inputs with the current values
+    renderThemeEditor(); // draw the theme picker in its current state
     refreshFromServer();
   }
 }
@@ -1548,7 +1549,7 @@ document.addEventListener("keydown", (e) => {
 // ============================================================
 //  To-do (Eisenhower matrix — a sub-view of the Notes tab)
 // ============================================================
-// todo = { id, quadrant: 1|2|3|4, title, note, due: "YYYY-MM-DD", done, ts }
+// todo = { id, quadrant: 1|2|3|4, title, note, due: "YYYY-MM-DD", done, doneBy: ["0"|"1"], ts }
 const TODOS_KEY = "mealPlanner.todos.v1";
 let todos = loadTodos();
 let todosPushTimer = null;
@@ -1664,35 +1665,45 @@ function noteGlyph() {
   return `<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M4 11h16M4 16h10"/></svg>`;
 }
 
-// Completion control: two small A/K buttons so you record WHO finished the task.
-// Tapping a person marks it done by them; tapping the same person again un-does
-// it; tapping the other person re-attributes it (stays done). `doneBy` holds the
-// person ("0"/"1"); `done` stays the simple boolean the rest of the app reads.
+// Normalize a task's completion attribution into a set of person-index strings.
+// `doneBy` is now an array (e.g. ["0"], ["0","1"]); older tasks may still carry a
+// single "0"/"1" or the legacy "both" — this reads all three shapes uniformly.
+function doneBySet(t) {
+  const v = t.doneBy;
+  if (Array.isArray(v)) return v.filter((p) => p === "0" || p === "1");
+  if (v === "both") return ["0", "1"];
+  if (v === "0" || v === "1") return [v];
+  return [];
+}
+// Completion control: two independent A/K toggles so you record WHO finished the
+// task. Each button flips that person on/off on its own, so a task can be done by
+// A, by K, or by both at once. `doneBy` holds the selected people; `done` stays
+// the simple boolean the rest of the app reads (true whenever anyone is selected).
 function todoDoneControl(t) {
   const wrap = document.createElement("div");
   wrap.className = "todo-doneby-pick";
+  const set = doneBySet(t);
   const opts = [
     ["0", "a", personInitial(0), personName(0)],
     ["1", "k", personInitial(1), personName(1)],
-    ["both", "both", personInitial(0) + personInitial(1), `${personName(0)} & ${personName(1)}`],
   ];
   opts.forEach(([p, cls, label, name]) => {
     const b = document.createElement("button");
     b.type = "button";
-    const active = Boolean(t.done) && t.doneBy === p;
+    const active = set.includes(p);
     b.className = `todo-doneby ${cls}` + (active ? " on" : "");
     b.textContent = label;
-    b.title = active ? `Done by ${name} — tap to undo` : `Mark done by ${name}`;
+    b.title = active ? `Done by ${name} — tap to remove` : `Mark done by ${name}`;
     b.setAttribute("aria-label", b.title);
     b.addEventListener("click", (e) => {
       e.stopPropagation();
-      if (Boolean(t.done) && t.doneBy === p) {
-        t.done = false;
-        t.doneBy = null;
-      } else {
-        t.done = true;
-        t.doneBy = p;
-      }
+      const next = doneBySet(t);
+      const i = next.indexOf(p);
+      if (i >= 0) next.splice(i, 1);
+      else next.push(p);
+      next.sort();
+      t.doneBy = next;
+      t.done = next.length > 0;
       saveTodos();
       afterTodosChanged();
     });
@@ -1703,11 +1714,13 @@ function todoDoneControl(t) {
 // A small "✓ by <name>" tag appended to a completed task so the attribution
 // reads clearly next to the (still-legible) struck-through title.
 function todoDoneTag(t) {
-  if (!t.done || !["0", "1", "both"].includes(t.doneBy)) return null;
+  const set = doneBySet(t);
+  if (!t.done || !set.length) return null;
+  const both = set.length === 2;
   const tag = document.createElement("span");
-  const cls = t.doneBy === "1" ? "k" : t.doneBy === "both" ? "both" : "a";
+  const cls = both ? "both" : set[0] === "1" ? "k" : "a";
   tag.className = `todo-doneby-tag ${cls}`;
-  tag.textContent = t.doneBy === "both" ? "✓ Both" : `✓ ${personName(Number(t.doneBy))}`;
+  tag.textContent = both ? "✓ Both" : `✓ ${personName(Number(set[0]))}`;
   return tag;
 }
 
@@ -3781,6 +3794,104 @@ function saveNamesEditor() {
 $("#namesEditor").addEventListener("submit", (e) => {
   e.preventDefault();
   saveNamesEditor();
+});
+
+// ---- Colour-theme editor (Settings tab) ----
+// State lives in window.Theme (theme.js); it is a per-device preference and is
+// NOT synced. This just renders the picker and forwards changes to Theme.apply.
+const CUSTOM_ROLES = [
+  { key: "bg", label: "Background" },
+  { key: "card", label: "Cards" },
+  { key: "ink", label: "Text" },
+  { key: "accent", label: "Accent" },
+  { key: "green", label: () => personName(0) }, // person 1's colour
+  { key: "katie", label: () => personName(1) }, // person 2's colour
+];
+
+function renderThemeEditor() {
+  const grid = $("#themeGrid");
+  if (!grid || !window.Theme) return;
+  const state = window.Theme.load();
+  const activeId = state.mode === "custom" ? "custom" : state.preset || "sage";
+
+  // Build one card per preset, plus a "Custom" card at the end.
+  const cards = window.Theme.PRESETS.map((p) => ({ id: p.id, name: p.name, swatch: [p.base.bg, p.base.accent, p.base.green, p.base.katie] }));
+  cards.push({ id: "custom", name: "Custom", swatch: window.Theme.swatchFor(state.mode === "custom" ? state : { mode: "custom", custom: window.Theme.baseFor(state) }) });
+
+  grid.innerHTML = cards
+    .map((c) => {
+      const on = c.id === activeId;
+      const swatches = c.swatch.map((col) => `<span style="background:${col}"></span>`).join("");
+      return `<button type="button" class="theme-card${on ? " active" : ""}" role="radio" aria-checked="${on}" data-theme="${c.id}">
+          <span class="theme-swatches">${swatches}</span>
+          <span class="theme-name">${escapeHtml(c.name)}<span class="tick">✓</span></span>
+        </button>`;
+    })
+    .join("");
+
+  renderCustomSwatches(state);
+  $("#customTheme").classList.toggle("hidden", activeId !== "custom");
+}
+
+function renderCustomSwatches(state) {
+  const wrap = $("#customSwatches");
+  if (!wrap) return;
+  const base = window.Theme.baseFor(state);
+  wrap.innerHTML = CUSTOM_ROLES.map((r) => {
+    const label = typeof r.label === "function" ? r.label() : r.label;
+    const val = base[r.key];
+    return `<div class="swatch-row">
+        <label for="sw-${r.key}">${escapeHtml(label)}</label>
+        <span class="swatch-hex" data-hex="${r.key}">${val}</span>
+        <input type="color" id="sw-${r.key}" data-role="${r.key}" value="${val}" aria-label="${escapeHtml(label)} colour" />
+      </div>`;
+  }).join("");
+}
+
+// Pick a preset (or open the custom editor) — apply live and persist.
+$("#themeGrid")?.addEventListener("click", (e) => {
+  const card = e.target.closest(".theme-card");
+  if (!card) return;
+  const id = card.dataset.theme;
+  let state;
+  if (id === "custom") {
+    // Seed the custom palette from whatever is showing now.
+    state = { mode: "custom", custom: window.Theme.baseFor(window.Theme.load()) };
+  } else {
+    state = { mode: "preset", preset: id };
+  }
+  window.Theme.save(state);
+  window.Theme.apply(state);
+  renderThemeEditor();
+});
+
+// Live-update a single colour as the user drags the wheel.
+$("#customSwatches")?.addEventListener("input", (e) => {
+  const input = e.target.closest('input[type="color"]');
+  if (!input) return;
+  const role = input.dataset.role;
+  const state = window.Theme.load();
+  const custom = state.mode === "custom" ? Object.assign({}, state.custom) : window.Theme.baseFor(state);
+  custom[role] = input.value;
+  const next = { mode: "custom", custom };
+  window.Theme.save(next);
+  window.Theme.apply(next);
+  const hex = $(`.swatch-hex[data-hex="${role}"]`);
+  if (hex) hex.textContent = input.value;
+  // Keep the "Custom" card preview in step without a full re-render (which would
+  // steal focus from the open colour picker).
+  const card = document.querySelector('.theme-card[data-theme="custom"] .theme-swatches');
+  if (card) {
+    const s = window.Theme.swatchFor(next);
+    card.innerHTML = s.map((col) => `<span style="background:${col}"></span>`).join("");
+  }
+});
+
+$("#themeResetCustom")?.addEventListener("click", () => {
+  const next = { mode: "custom", custom: Object.assign({}, window.Theme.SAGE_BASE) };
+  window.Theme.save(next);
+  window.Theme.apply(next);
+  renderThemeEditor();
 });
 
 // ---- Account block in Settings (only meaningful when the passcode gate is on) ----

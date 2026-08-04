@@ -9,6 +9,8 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400..600&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="style.css" />
+    <!-- Applies the saved colour theme before first paint (no flash of default). -->
+    <script src="theme.js"></script>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='22' fill='%231a1b16'/><circle cx='50' cy='46' r='24' fill='none' stroke='%23a6c199' stroke-width='6'/><line x1='50' y1='64' x2='50' y2='82' stroke='%23a6c199' stroke-width='6' stroke-linecap='round'/></svg>" />
     <!-- PWA: installable, standalone, themed to the app's dark palette -->
     <link rel="manifest" href="manifest.webmanifest" />
@@ -307,6 +309,18 @@
             <button type="submit" id="namesSave" class="primary">Save names</button>
           </div>
         </form>
+
+        <div class="theme-editor">
+          <h3 class="settings-subhead">Appearance</h3>
+          <p class="names-editor-hint">Pick a colour theme, or build your own.</p>
+          <div id="themeGrid" class="theme-grid" role="radiogroup" aria-label="Colour theme"></div>
+          <div id="customTheme" class="custom-theme hidden">
+            <p class="names-editor-hint">Tap a swatch to recolour each part of the app.</p>
+            <div id="customSwatches" class="custom-swatches"></div>
+            <button type="button" id="themeResetCustom" class="ghost">Reset to Sage colours</button>
+          </div>
+        </div>
+
         <div id="accountBlock" class="account-block hidden">
           <p id="householdLabel" class="account-label"></p>
           <button type="button" id="signOutBtn" class="ghost">Sign out</button>
