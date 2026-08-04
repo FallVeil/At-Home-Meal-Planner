@@ -909,6 +909,38 @@ button { font-family: inherit; }
 }
 .dash-due.overdue { color: var(--danger); border-color: var(--danger); }
 .dash-row.done .dash-row-title { text-decoration: line-through; color: var(--muted); }
+/* Small "when" tag on the Home dashboard's 7-day calendar list. */
+.dash-day {
+  flex: none;
+  min-width: 34px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+/* Katie's payday marker ($ coin in her colour) — Home, month grid, day editor. */
+.pay-ico {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--katie);
+  color: #fff;
+  font-size: 0.7rem;
+  font-weight: 800;
+  line-height: 1;
+}
+.cal-event.payday {
+  background: rgba(207, 138, 85, 0.22);
+  gap: 3px;
+}
+.cal-event.payday .pay-ico { width: 12px; height: 12px; font-size: 0.55rem; }
+.event-row.payday-row { color: var(--katie); }
+.pay-tag { background: var(--katie); color: #fff; }
 .dash-pips { display: flex; align-items: center; gap: 3px; flex: none; }
 .dash-pips .pip { width: 10px; height: 10px; border-radius: 2px; }
 /* Small quadrant swatch — shared by dashboard to-do rows and calendar task chips. */
@@ -962,11 +994,63 @@ button { font-family: inherit; }
 /* Roomier rows with dividers inside the expanded quadrant pop-up. */
 #quadModalItems .todo-item { padding: 8px 2px; }
 #quadModalItems .todo-item + .todo-item { border-top: 1px solid var(--line); }
-/* Green tick to match the chore checklist's "done" squares. */
-.todo-check { width: 18px; height: 18px; margin-top: 2px; flex: none; cursor: pointer; accent-color: var(--green); }
+/* A/K completion buttons: tap one to record who finished the task. */
+.todo-doneby-pick { display: flex; gap: 4px; margin-top: 1px; flex: none; }
+.todo-doneby {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1.5px solid var(--line);
+  background: transparent;
+  color: var(--muted);
+  font-weight: 800;
+  font-size: 0.68rem;
+  line-height: 1;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  -webkit-user-select: none;
+  user-select: none;
+  touch-action: manipulation;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+.todo-doneby.a { color: var(--green); }
+.todo-doneby.k { color: var(--katie); }
+.todo-doneby.both {
+  color: var(--accent);
+  width: auto;
+  min-width: 26px;
+  padding: 0 4px;
+  font-size: 0.6rem;
+  letter-spacing: -0.5px;
+  border-radius: 11px;
+}
+.todo-doneby:hover { border-color: currentColor; }
+.todo-doneby.on.a { background: var(--green); border-color: var(--green); color: #fff; }
+.todo-doneby.on.k { background: var(--katie); border-color: var(--katie); color: #fff; }
+.todo-doneby.on.both { background: var(--accent); border-color: var(--accent); color: #21341a; }
 .todo-body { flex: 1; min-width: 0; cursor: pointer; }
 .todo-title { font-size: 0.92rem; line-height: 1.28; }
-.todo-item.done .todo-title { text-decoration: line-through; color: var(--muted); }
+/* Completed: struck through but kept legible (thin line, near-full contrast). */
+.todo-item.done .todo-title {
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+  text-decoration-color: var(--muted);
+  color: var(--ink);
+  opacity: 0.72;
+}
+.todo-doneby-tag {
+  font-size: 0.66rem;
+  font-weight: 700;
+  padding: 1px 7px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.todo-doneby-tag.a { color: var(--green); background: rgba(79, 140, 98, 0.16); }
+.todo-doneby-tag.k { color: var(--katie); background: rgba(207, 138, 85, 0.18); }
+.todo-doneby-tag.both { color: var(--accent); background: rgba(166, 193, 153, 0.16); }
 /* Show each task's notes right under its title; long notes fade out (like
    Quick Notes) so one task can't swallow the list — tapping opens the full text. */
 .todo-note {
@@ -1387,6 +1471,69 @@ button { font-family: inherit; }
   font-size: 16px;
 }
 .repeat-row input::placeholder { color: var(--muted); }
+.repeat-row select { flex: 1 1 auto; max-width: 100%; }
+
+/* ---- Custom recurrence screen ---- */
+.recur-body { display: flex; flex-direction: column; padding-bottom: 24px; }
+.recur-section { margin-top: 4px; }
+.recur-every-row { display: flex; align-items: center; gap: 8px; }
+.recur-every-row input {
+  width: 72px;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--card);
+  color: var(--ink);
+  font-size: 16px;
+}
+.recur-every-row select {
+  flex: 1 1 auto;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--card);
+  color: var(--ink);
+  font-size: 15px;
+  cursor: pointer;
+}
+#recurMonthMode {
+  width: 100%;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--card);
+  color: var(--ink);
+  font-size: 15px;
+  cursor: pointer;
+}
+.recur-weekdays { display: flex; gap: 6px; flex-wrap: wrap; }
+.recur-wd {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  border: 1.5px solid var(--line);
+  background: transparent;
+  color: var(--muted);
+  font-weight: 700;
+  font-size: 0.85rem;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.recur-wd.on { background: var(--accent); border-color: var(--accent); color: #21341a; }
+.recur-ends { display: flex; flex-direction: column; gap: 10px; }
+.recur-end-opt { display: flex; align-items: center; gap: 8px; font-size: 0.9rem; flex-wrap: wrap; }
+.recur-end-opt input[type="radio"] { width: 18px; height: 18px; accent-color: var(--green); flex: none; }
+.recur-end-opt input[type="date"],
+.recur-end-opt input[type="number"] {
+  padding: 7px 9px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--card);
+  color: var(--ink);
+  font-size: 15px;
+}
+.recur-end-opt input[type="number"] { width: 66px; }
+.recur-body .field-label:first-child { margin-top: 0; }
 
 /* Searchable emoji dropdown (opened by the emoji button) */
 .emoji-picker {
@@ -1482,14 +1629,94 @@ button { font-family: inherit; }
   font-size: 0.75rem;
 }
 .chore-group.collapsed .chore-items { display: none; }
-/* Optional sub-category heading nested within a room. */
+.chore-cat .cat-name { flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; }
+/* Sub-category: its own collapsible header nested within a room, sitting
+   beneath the room's general chores. */
+.chore-subgroup { margin: 6px 0 2px; }
 .chore-subcat {
   display: flex; align-items: center; gap: 6px;
   margin: 8px 0 4px; padding-left: 4px;
   font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.04em;
   color: var(--muted); font-weight: 600;
+  cursor: pointer; user-select: none;
 }
+.chore-subcat .chev { font-size: 0.62rem; }
+.chore-subcat .cat-name { flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; }
 .chore-subcat .cat-count { font-weight: 400; text-transform: none; letter-spacing: normal; }
+.chore-subgroup.collapsed .chore-subitems { display: none; }
+.chore-subitems { padding-left: 4px; }
+/* Right-side cluster on a room header: edit controls + the quick-add "+". */
+.chore-cat-actions { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; flex: none; }
+/* Subtle round "+" on room / sub-category headers (quick-add). */
+.chore-add-mini {
+  margin-left: auto;
+  flex: none;
+  width: 20px; height: 20px;
+  border-radius: 50%;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--muted);
+  font-size: 0.95rem; line-height: 1;
+  cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
+  padding: 0;
+}
+.chore-cat-actions .chore-add-mini { margin-left: 0; }
+.chore-add-mini:hover { color: var(--accent); border-color: var(--accent); }
+/* Edit-mode reorder / delete controls on a category header (hidden otherwise). */
+.chore-cat-edit { display: none; align-items: center; gap: 2px; }
+#choreChecklist.editing .chore-cat-edit { display: inline-flex; }
+.cat-move, .cat-del {
+  width: 22px; height: 22px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--muted);
+  border-radius: 6px;
+  font-size: 0.7rem; line-height: 1;
+  cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
+  padding: 0;
+}
+.cat-move:hover:not(:disabled) { color: var(--accent); border-color: var(--accent); }
+.cat-move:disabled { opacity: 0.3; cursor: default; }
+.cat-del { color: var(--danger); }
+.cat-del:hover { border-color: var(--danger); }
+/* Quiet text links to add a sub-category (nested) or a top-level category. */
+.chore-add-sub, .chore-add-cat {
+  display: inline-block;
+  background: transparent; border: none;
+  color: var(--muted); cursor: pointer;
+}
+.chore-add-sub { margin: 4px 0 2px 22px; padding: 2px 4px; font-size: 0.72rem; } /* indented: nested */
+.chore-add-cat { margin: 10px 0 2px 2px; padding: 4px 4px; font-size: 0.8rem; font-weight: 600; }
+.chore-add-sub:hover, .chore-add-cat:hover { color: var(--accent); }
+/* Inline add row: text box + Add + cancel, revealed by a "+" affordance. */
+.chore-inline-add { display: flex; gap: 6px; align-items: center; margin: 4px 0 8px; }
+.chore-inline-add.chore-inline-sub { margin-left: 22px; }
+.chore-inline-add input {
+  flex: 1 1 auto; min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--card);
+  color: var(--ink);
+  font-size: 16px;
+}
+.chore-inline-add input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.chore-inline-ok {
+  flex: none;
+  background: var(--green); color: #fff;
+  border: none; border-radius: 9px;
+  padding: 8px 14px; font-weight: 600; font-size: 0.85rem; cursor: pointer;
+}
+.chore-inline-ok:hover { background: var(--green-dark); }
+.chore-inline-cancel {
+  flex: none;
+  background: transparent; border: 1px solid var(--line);
+  color: var(--muted); border-radius: 9px;
+  width: 34px; height: 34px; cursor: pointer; font-size: 0.85rem;
+}
+.chore-inline-cancel:hover { color: var(--danger); border-color: var(--danger); }
 /* Sub-category divider row in the history grid. */
 .hist-subcat td {
   text-align: left; padding: 4px 6px 2px 14px;
@@ -1678,14 +1905,26 @@ button { font-family: inherit; }
 .streak-pill {
   display: inline-flex;
   align-items: center;
-  gap: 3px;
-  font-size: 0.72rem;
-  font-weight: 600;
-  padding: 2px 8px;
+  gap: 4px;
+  font-size: 0.74rem;
+  font-weight: 800;
+  padding: 2px 9px 2px 6px;
   border-radius: 999px;
-  background: var(--accent);
-  color: #21341a;
   white-space: nowrap;
+  border: 1px solid transparent;
+}
+.streak-pill .streak-ico { flex: none; }
+/* Kept today → warm flame pill. */
+.streak-pill.hot {
+  background: rgba(255, 122, 24, 0.16);
+  color: #ff9a3c;
+  border-color: rgba(255, 122, 24, 0.5);
+}
+/* Streak at risk (not done today) → cool frozen pill. */
+.streak-pill.cold {
+  background: rgba(99, 201, 255, 0.14);
+  color: #7fd4ff;
+  border-color: rgba(99, 201, 255, 0.45);
 }
 .chore-del {
   display: none; /* revealed only in Edit mode */
@@ -1699,6 +1938,104 @@ button { font-family: inherit; }
 }
 #choreChecklist.editing .chore-del { display: inline-flex; }
 .chore-del:hover { color: var(--danger); opacity: 0.75; }
+
+/* ---- Assigned board (per-person columns + an unassigned pool) ---- */
+.assigned-hint { color: var(--muted); font-size: 0.82rem; margin: 0 0 12px; }
+.assigned-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.assigned-col {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 8px;
+  box-shadow: var(--shadow);
+  min-width: 0;
+}
+.assigned-col.col-a { border-top: 3px solid var(--green); }
+.assigned-col.col-k { border-top: 3px solid var(--katie); }
+.assigned-col-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 2px 8px;
+  font-weight: 700;
+  font-size: 0.9rem;
+}
+.assigned-col-head .pbubble { width: 20px; height: 20px; font-size: 0.66rem; flex: none; }
+.assigned-col-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.assigned-col-head .cat-count { margin-left: auto; }
+.assigned-col-body { display: flex; flex-direction: column; gap: 6px; }
+.assigned-empty { color: var(--muted); font-size: 0.78rem; padding: 6px 2px; }
+.assigned-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 6px 7px;
+}
+.assigned-name { flex: 1 1 auto; min-width: 0; font-size: 0.86rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.assigned-row.done .assigned-name { text-decoration: line-through; color: var(--ink); opacity: 0.66; text-decoration-thickness: 1px; }
+.assigned-check {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  border: 1.5px solid var(--line);
+  background: transparent;
+  color: #fff;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  touch-action: manipulation;
+}
+.assigned-check.on.a { background: var(--green); border-color: var(--green); }
+.assigned-check.on.k { background: var(--katie); border-color: var(--katie); }
+.assigned-actions { display: flex; align-items: center; gap: 4px; flex: none; }
+.assigned-move,
+.assigned-unassign,
+.assign-to {
+  border: 1.5px solid var(--line);
+  background: transparent;
+  color: var(--muted);
+  border-radius: 6px;
+  min-width: 24px;
+  height: 24px;
+  padding: 0 5px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  touch-action: manipulation;
+}
+.assigned-move:hover,
+.assigned-unassign:hover,
+.assign-to:hover { border-color: currentColor; }
+.assign-to.a { color: var(--green); }
+.assign-to.k { color: var(--katie); }
+.assigned-unassign { color: var(--danger); }
+.assigned-unassigned { margin-top: 16px; }
+.assigned-un-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-display);
+  font-size: 0.98rem;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+.assigned-un-group { margin-bottom: 10px; }
+.assigned-un-cat {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  margin: 4px 0 5px;
+}
+.assigned-un-group .assigned-row { margin-bottom: 6px; }
 
 /* Quiet text button (the checklist "Edit" toggle). */
 .linkish {

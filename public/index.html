@@ -168,7 +168,7 @@
           <button id="calToday" class="linkish" type="button">Today</button>
         </div>
         <div class="cal-weekdays">
-          <span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span><span>Sun</span>
+          <span>Sun</span><span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span>
         </div>
         <div id="calGrid" class="cal-grid"></div>
         <div id="weekPop" class="week-pop hidden"></div>
@@ -267,26 +267,19 @@
         </div>
         <div class="chip-row" id="choreView">
           <button type="button" class="chip active" data-view="list">Checklist</button>
+          <button type="button" class="chip" data-view="assigned">Assigned</button>
           <button type="button" class="chip" data-view="history">History</button>
         </div>
         <div id="choreChecklist">
-          <form id="addChoreForm" class="add-chore">
-            <select id="addChoreCat" class="chore-cat-select" aria-label="Room / category"></select>
-            <input id="addChoreCatNew" type="text" class="hidden" placeholder="New room name" autocomplete="off" />
-            <div class="chore-name-field">
-              <input id="addChoreInput" type="text" placeholder="Add a chore or habit…" autocomplete="off" />
-              <button type="submit" aria-label="Add chore">
-                <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <polyline points="9 10 4 15 9 20" />
-                  <path d="M20 4v7a4 4 0 0 1-4 4H4" />
-                </svg>
-              </button>
-            </div>
-          </form>
           <div id="choreList"></div>
           <div id="choreEmpty" class="empty">
-            No items yet. Add a daily chore or habit to start tracking.
+            No categories yet. Add one below to start tracking.
           </div>
+        </div>
+        <div id="choreAssigned" class="hidden">
+          <p class="assigned-hint">Assign chores to each person, then check them off as they're done today.</p>
+          <div id="assignedCols" class="assigned-cols"></div>
+          <div id="assignedUnassigned" class="assigned-unassigned"></div>
         </div>
         <div id="choreHistory" class="hidden">
           <div class="chip-row" id="historyRange">
@@ -378,18 +371,58 @@
           </div>
           <div class="repeat-row">
             <label class="repeat-label" for="eventRepeat">Repeat</label>
-            <select id="eventRepeat" aria-label="Repeat">
-              <option value="none">Does not repeat</option>
-              <option value="daily">Daily</option>
-              <option value="weekly">Weekly</option>
-              <option value="monthly">Monthly</option>
-              <option value="monthdays">Days of month…</option>
-            </select>
-            <input id="eventRepeatDays" type="text" inputmode="numeric" class="hidden"
-                   placeholder="e.g. 15, 30" autocomplete="off" aria-label="Days of month" />
+            <select id="eventRepeat" aria-label="Repeat"></select>
           </div>
         </form>
       </div>
+      </div>
+    </div>
+
+    <!-- Custom recurrence screen (Google-style), opened from the event Repeat menu -->
+    <div id="recurEditor" class="day-editor hidden">
+      <div class="day-editor-card">
+        <div class="day-editor-bar">
+          <button id="recurCancel" class="ghost">Cancel</button>
+          <h2>Custom recurrence</h2>
+          <button id="recurDone" class="primary">Done</button>
+        </div>
+        <div class="day-editor-body recur-body">
+          <label class="field-label">Repeat every</label>
+          <div class="recur-every-row">
+            <input id="recurInterval" type="number" min="1" value="1" inputmode="numeric" aria-label="Interval" />
+            <select id="recurUnit" aria-label="Unit">
+              <option value="daily">day</option>
+              <option value="weekly">week</option>
+              <option value="monthly">month</option>
+              <option value="yearly">year</option>
+            </select>
+          </div>
+          <div id="recurWeekly" class="recur-section hidden">
+            <label class="field-label">Repeat on</label>
+            <div id="recurWeekdays" class="recur-weekdays"></div>
+          </div>
+          <div id="recurMonthly" class="recur-section hidden">
+            <label class="field-label">Monthly</label>
+            <select id="recurMonthMode" aria-label="Monthly option"></select>
+          </div>
+          <div class="recur-section">
+            <label class="field-label">Ends</label>
+            <div class="recur-ends">
+              <label class="recur-end-opt">
+                <input type="radio" name="recurEnd" value="never" checked /> <span>Never</span>
+              </label>
+              <label class="recur-end-opt">
+                <input type="radio" name="recurEnd" value="onDate" /> <span>On</span>
+                <input id="recurEndDate" type="date" aria-label="End date" />
+              </label>
+              <label class="recur-end-opt">
+                <input type="radio" name="recurEnd" value="after" /> <span>After</span>
+                <input id="recurEndCount" type="number" min="1" value="13" aria-label="Occurrences" />
+                <span>occurrences</span>
+              </label>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
 

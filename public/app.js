@@ -169,6 +169,7 @@ function applyPeopleLabels() {
 
 // ---- Cross-device sync (active only when the server has shared storage) ----
 let syncEnabled = false;
+let household = "local"; // which household this session belongs to (from /api/config)
 let planPushTimer = null;
 let favPushTimer = null;
 
@@ -234,7 +235,7 @@ async function refreshFromServer() {
       updateNotesCount();
     }
     if (tr.enabled && tr.tracker && Array.isArray(tr.tracker.items)) {
-      tracker = { items: normalizeChores(tr.tracker.items) };
+      tracker = normalizeTracker(tr.tracker);
       localStorage.setItem(TRACKER_KEY, JSON.stringify(tracker));
     }
     if (er.enabled && Array.isArray(er.events)) {
@@ -324,7 +325,7 @@ async function initSync() {
     if (tr.enabled) {
       const st = tr.tracker;
       if (st && Array.isArray(st.items) && st.items.length) {
-        tracker = { items: normalizeChores(st.items) };
+        tracker = normalizeTracker(st);
         localStorage.setItem(TRACKER_KEY, JSON.stringify(tracker));
       } else if (tracker.items.length) {
         scheduleTrackerPush();
@@ -364,6 +365,13 @@ function startOfWeek(d) {
   const date = new Date(d.getFullYear(), d.getMonth(), d.getDate());
   const dow = (date.getDay() + 6) % 7; // 0 = Monday … 6 = Sunday
   date.setDate(date.getDate() - dow);
+  return date;
+}
+// Sunday-based week start — used only for the Calendar month grid's layout
+// (the Planner/chore logic stays Monday-based via startOfWeek above).
+function startOfWeekSun(d) {
+  const date = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  date.setDate(date.getDate() - date.getDay()); // getDay(): 0 = Sunday
   return date;
 }
 function isoDate(d) {
@@ -544,6 +552,7 @@ function anyOverlayOpen() {
     !$("#modal").classList.contains("hidden") ||
     !$("#noteEditor").classList.contains("hidden") ||
     !$("#dayEditor").classList.contains("hidden") ||
+    !$("#recurEditor").classList.contains("hidden") ||
     !$("#quadModal").classList.contains("hidden") ||
     !$("#todoEditor").classList.contains("hidden")
   );
@@ -552,6 +561,8 @@ function anyOverlayOpen() {
 // pop-up with a task editor on top — and each has its own history entry, so a
 // single Back peels off one layer at a time. Order = top of the stack first.
 function closeOpenOverlays() {
+  // The custom recurrence screen stacks on top of the day editor — peel it first.
+  if (!$("#recurEditor").classList.contains("hidden")) return closeRecurEditor();
   if (!$("#todoEditor").classList.contains("hidden")) return closeTodoEditor();
   if (!$("#noteEditor").classList.contains("hidden")) return closeNoteEditor();
   // The day pop-up peels form → list before it closes.
@@ -1602,6 +1613,16 @@ function todosDueNext7Days() {
     .filter((t) => t.due && t.due >= startKey && t.due <= endKey)
     .sort((a, b) => a.done - b.done || a.due.localeCompare(b.due) || a.quadrant - b.quadrant);
 }
+// Short "when" label for a date on the Home dashboard's 7-day list.
+function dashDayLabel(dateKey) {
+  const today = new Date();
+  const todayKey = isoDate(today);
+  const tmr = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1);
+  if (dateKey === todayKey) return "Today";
+  if (dateKey === isoDate(tmr)) return "Tmrw";
+  return parseKey(dateKey).toLocaleDateString(undefined, { weekday: "short" });
+}
+
 // Keep the calendar/home in sync after a to-do changes (they mirror to-do data).
 const isTabActive = (id) => $("#" + id).classList.contains("active");
 function renderHomeIfActive() {
@@ -1643,19 +1664,51 @@ function noteGlyph() {
   return `<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M4 11h16M4 16h10"/></svg>`;
 }
 
-// Shared checkbox: toggles done and stops the tap from bubbling to the quad.
-function todoCheck(t) {
-  const cb = document.createElement("input");
-  cb.type = "checkbox";
-  cb.className = "todo-check";
-  cb.checked = Boolean(t.done);
-  cb.addEventListener("click", (e) => e.stopPropagation());
-  cb.addEventListener("change", () => {
-    t.done = cb.checked;
-    saveTodos();
-    afterTodosChanged();
+// Completion control: two small A/K buttons so you record WHO finished the task.
+// Tapping a person marks it done by them; tapping the same person again un-does
+// it; tapping the other person re-attributes it (stays done). `doneBy` holds the
+// person ("0"/"1"); `done` stays the simple boolean the rest of the app reads.
+function todoDoneControl(t) {
+  const wrap = document.createElement("div");
+  wrap.className = "todo-doneby-pick";
+  const opts = [
+    ["0", "a", personInitial(0), personName(0)],
+    ["1", "k", personInitial(1), personName(1)],
+    ["both", "both", personInitial(0) + personInitial(1), `${personName(0)} & ${personName(1)}`],
+  ];
+  opts.forEach(([p, cls, label, name]) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    const active = Boolean(t.done) && t.doneBy === p;
+    b.className = `todo-doneby ${cls}` + (active ? " on" : "");
+    b.textContent = label;
+    b.title = active ? `Done by ${name} — tap to undo` : `Mark done by ${name}`;
+    b.setAttribute("aria-label", b.title);
+    b.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (Boolean(t.done) && t.doneBy === p) {
+        t.done = false;
+        t.doneBy = null;
+      } else {
+        t.done = true;
+        t.doneBy = p;
+      }
+      saveTodos();
+      afterTodosChanged();
+    });
+    wrap.appendChild(b);
   });
-  return cb;
+  return wrap;
+}
+// A small "✓ by <name>" tag appended to a completed task so the attribution
+// reads clearly next to the (still-legible) struck-through title.
+function todoDoneTag(t) {
+  if (!t.done || !["0", "1", "both"].includes(t.doneBy)) return null;
+  const tag = document.createElement("span");
+  const cls = t.doneBy === "1" ? "k" : t.doneBy === "both" ? "both" : "a";
+  tag.className = `todo-doneby-tag ${cls}`;
+  tag.textContent = t.doneBy === "both" ? "✓ Both" : `✓ ${personName(Number(t.doneBy))}`;
+  return tag;
 }
 
 // Compact grid row: title + due chip + a note indicator. No per-row click —
@@ -1669,7 +1722,8 @@ function todoPreviewRow(t) {
   title.className = "todo-title";
   title.textContent = t.title;
   body.appendChild(title);
-  if (t.due || t.note) {
+  const doneTag = todoDoneTag(t);
+  if (t.due || t.note || doneTag) {
     const meta = document.createElement("div");
     meta.className = "todo-meta";
     if (t.due) {
@@ -1685,9 +1739,10 @@ function todoPreviewRow(t) {
       glyph.innerHTML = noteGlyph();
       meta.appendChild(glyph);
     }
+    if (doneTag) meta.appendChild(doneTag);
     body.appendChild(meta);
   }
-  row.append(todoCheck(t), body);
+  row.append(todoDoneControl(t), body);
   return row;
 }
 
@@ -1712,17 +1767,21 @@ function todoRow(t) {
     });
     body.appendChild(note);
   }
-  if (t.due) {
+  const doneTag = todoDoneTag(t);
+  if (t.due || doneTag) {
     const meta = document.createElement("div");
     meta.className = "todo-meta";
-    const due = document.createElement("span");
-    due.className = "todo-due" + (isOverdue(t.due) && !t.done ? " overdue" : "");
-    due.textContent = fmtDue(t.due);
-    meta.appendChild(due);
+    if (t.due) {
+      const due = document.createElement("span");
+      due.className = "todo-due" + (isOverdue(t.due) && !t.done ? " overdue" : "");
+      due.textContent = fmtDue(t.due);
+      meta.appendChild(due);
+    }
+    if (doneTag) meta.appendChild(doneTag);
     body.appendChild(meta);
   }
   body.addEventListener("click", () => openTodoEditor(t.quadrant, t.id));
-  row.append(todoCheck(t), body);
+  row.append(todoDoneControl(t), body);
   return row;
 }
 
@@ -1894,9 +1953,118 @@ const MONTHS_FULL = [
   "January", "February", "March", "April", "May", "June",
   "July", "August", "September", "October", "November", "December",
 ];
-// Does a (possibly recurring) event land on this day? A recurrence is anchored
-// at the event's own `date` and never fires before it.
-function occursOn(e, dateKey) {
+// ---- Katie's pay schedule (hardcoded for the andrew-katie household) ----
+// Payday is the 16th and the last day of each month; if either lands on a
+// weekend it moves to the Friday before. Only shown for their household.
+const PAY_HOUSEHOLDS = new Set(["andrew-katie", "local"]);
+const payEnabled = () => PAY_HOUSEHOLDS.has(household);
+function shiftToFridayIfWeekend(d) {
+  const g = d.getDay();
+  if (g === 6) d.setDate(d.getDate() - 1); // Saturday → Friday
+  else if (g === 0) d.setDate(d.getDate() - 2); // Sunday → Friday
+  return d;
+}
+function katiePaydaysInMonth(year, month) {
+  const mid = shiftToFridayIfWeekend(new Date(year, month, 16));
+  const last = shiftToFridayIfWeekend(new Date(year, month + 1, 0)); // day 0 of next month = last of this
+  return [isoDate(mid), isoDate(last)];
+}
+function isKatiePayday(dateKey) {
+  if (!payEnabled()) return false;
+  const d = parseKey(dateKey);
+  return katiePaydaysInMonth(d.getFullYear(), d.getMonth()).includes(dateKey);
+}
+function paydayLabel() {
+  return `${personName(1)} payday`;
+}
+
+// ---- Recurrence engine (Google-style rules stored on event.recur) ----
+// recur = { freq: "daily|weekly|monthly|yearly", interval, weekdays:[0..6],
+//           monthMode: "day|weekday|lastday", ends:{ type:"never|onDate|after",
+//           date, count } }. Older events use the legacy `repeat`/`days` fields.
+function daysInMonth(y, m) {
+  return new Date(y, m + 1, 0).getDate();
+}
+function isLastDayOfMonth(d) {
+  return d.getDate() === daysInMonth(d.getFullYear(), d.getMonth());
+}
+function nthWeekdayOfMonth(d) {
+  return Math.floor((d.getDate() - 1) / 7) + 1; // 1st..5th occurrence of its weekday
+}
+function daysBetween(a, b) {
+  const A = new Date(a.getFullYear(), a.getMonth(), a.getDate());
+  const B = new Date(b.getFullYear(), b.getMonth(), b.getDate());
+  return Math.round((B - A) / 86400000);
+}
+// 1-based index of the occurrence on day d, but stops counting once it passes
+// `cap` (so an "after N" series is cheap to evaluate far in the future).
+function occurrenceIndexCapped(e, d, cap) {
+  const r = e.recur;
+  const s = parseKey(e.date);
+  const interval = Math.max(1, r.interval || 1);
+  if (r.freq === "daily") return Math.floor(daysBetween(s, d) / interval) + 1;
+  if (r.freq === "monthly")
+    return Math.floor(((d.getFullYear() - s.getFullYear()) * 12 + (d.getMonth() - s.getMonth())) / interval) + 1;
+  if (r.freq === "yearly") return Math.floor((d.getFullYear() - s.getFullYear()) / interval) + 1;
+  // weekly: count matching days from start to d, bailing out past the cap.
+  const wds = r.weekdays && r.weekdays.length ? r.weekdays : [s.getDay()];
+  const sw = startOfWeekSun(s);
+  let count = 0;
+  const cur = new Date(s.getFullYear(), s.getMonth(), s.getDate());
+  while (cur <= d) {
+    const weeks = Math.floor(daysBetween(sw, startOfWeekSun(cur)) / 7);
+    if (weeks % interval === 0 && wds.includes(cur.getDay())) {
+      count++;
+      if (count > cap) return count;
+    }
+    cur.setDate(cur.getDate() + 1);
+  }
+  return count;
+}
+function occursOnRecur(e, dateKey) {
+  const r = e.recur;
+  if (dateKey < e.date) return false;
+  if (r.ends && r.ends.type === "onDate" && r.ends.date && dateKey > r.ends.date) return false;
+  const d = parseKey(dateKey);
+  const s = parseKey(e.date);
+  const interval = Math.max(1, r.interval || 1);
+  let matches = false;
+  switch (r.freq) {
+    case "daily":
+      matches = daysBetween(s, d) % interval === 0;
+      break;
+    case "weekly": {
+      const wds = r.weekdays && r.weekdays.length ? r.weekdays : [s.getDay()];
+      if (!wds.includes(d.getDay())) break;
+      const weeks = Math.floor(daysBetween(startOfWeekSun(s), startOfWeekSun(d)) / 7);
+      matches = weeks % interval === 0;
+      break;
+    }
+    case "monthly": {
+      const months = (d.getFullYear() - s.getFullYear()) * 12 + (d.getMonth() - s.getMonth());
+      if (months < 0 || months % interval !== 0) break;
+      if (r.monthMode === "lastday") matches = isLastDayOfMonth(d);
+      else if (r.monthMode === "weekday")
+        matches = d.getDay() === s.getDay() && nthWeekdayOfMonth(d) === nthWeekdayOfMonth(s);
+      else matches = d.getDate() === s.getDate();
+      break;
+    }
+    case "yearly": {
+      const years = d.getFullYear() - s.getFullYear();
+      if (years < 0 || years % interval !== 0) break;
+      matches = d.getMonth() === s.getMonth() && d.getDate() === s.getDate();
+      break;
+    }
+  }
+  if (!matches) return false;
+  if (r.ends && r.ends.type === "after") {
+    const cap = Math.max(1, r.ends.count || 1);
+    if (occurrenceIndexCapped(e, d, cap) > cap) return false;
+  }
+  return true;
+}
+// Legacy events (no `recur`) keep their original simple behaviour exactly.
+function legacyOccursOn(e, dateKey) {
   const rep = e.repeat || "none";
   if (rep === "none") return e.date === dateKey;
   if (dateKey < e.date) return false;
@@ -1915,6 +2083,12 @@ function occursOn(e, dateKey) {
       return e.date === dateKey;
   }
 }
+// Does a (possibly recurring) event land on this day? A recurrence is anchored
+// at the event's own `date` and never fires before it.
+function occursOn(e, dateKey) {
+  if (e.recur && e.recur.freq) return occursOnRecur(e, dateKey);
+  return legacyOccursOn(e, dateKey);
+}
 // Events for a given day, sorted by time (untimed last), then title.
 function eventsOnDay(dateKey) {
   return events
@@ -1932,7 +2106,54 @@ function ordinal(n) {
   const v = n % 100;
   return n + (s[(v - 20) % 10] || s[v] || s[0]);
 }
+const WEEKDAYS_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const NTH_WORD = ["", "first", "second", "third", "fourth", "fifth"];
+// Human-readable summary of a recurrence rule, for chips/rows and the picker.
+function recurSummary(e) {
+  const r = e.recur;
+  const s = parseKey(e.date);
+  const n = Math.max(1, r.interval || 1);
+  const plural = n > 1 ? `${n} ` : "";
+  let base = "";
+  switch (r.freq) {
+    case "daily":
+      base = n > 1 ? `Every ${n} days` : "Every day";
+      break;
+    case "weekly": {
+      const wds = (r.weekdays && r.weekdays.length ? r.weekdays : [s.getDay()])
+        .slice()
+        .sort((a, b) => a - b);
+      // Mon–Fri is the "Every weekday" preset.
+      if (n === 1 && wds.length === 5 && wds.every((x) => x >= 1 && x <= 5)) {
+        base = "Every weekday";
+      } else {
+        const names = wds.map((x) => WEEKDAYS_SHORT[x]).join(", ");
+        base = n > 1 ? `Every ${n} weeks on ${names}` : `Weekly on ${names}`;
+      }
+      break;
+    }
+    case "monthly": {
+      const every = n > 1 ? `Every ${n} months ` : "Monthly ";
+      if (r.monthMode === "lastday") base = every + "on the last day";
+      else if (r.monthMode === "weekday")
+        base = every + `on the ${NTH_WORD[nthWeekdayOfMonth(s)] || nthWeekdayOfMonth(s) + "th"} ${WEEKDAYS_FULL[s.getDay()]}`;
+      else base = every + `on day ${s.getDate()}`;
+      break;
+    }
+    case "yearly":
+      base = (n > 1 ? `Every ${n} years ` : "Annually ") + `on ${MONTHS_FULL[s.getMonth()].slice(0, 3)} ${s.getDate()}`;
+      break;
+    default:
+      base = "";
+  }
+  if (r.ends && r.ends.type === "onDate" && r.ends.date)
+    base += `, until ${parseKey(r.ends.date).toLocaleDateString(undefined, { month: "short", day: "numeric" })}`;
+  else if (r.ends && r.ends.type === "after" && r.ends.count)
+    base += `, ${r.ends.count} times`;
+  return base;
+}
 function repeatSummary(e) {
+  if (e.recur && e.recur.freq) return recurSummary(e);
   switch (e.repeat) {
     case "daily":
       return "Every day";
@@ -2001,38 +2222,198 @@ function setEventTime(t) {
   aSel.value = H < 12 ? "AM" : "PM";
 }
 
-// Recurrence controls. The "days of month" text box only shows for that mode.
-function syncRepeatDaysVisibility() {
-  const sel = $("#eventRepeat");
-  const box = $("#eventRepeatDays");
-  if (!sel || !box) return;
-  box.classList.toggle("hidden", sel.value !== "monthdays");
-}
-function setEventRepeat(repeat, days) {
+// ---- Recurrence picker (Google-style presets + a Custom screen) ----
+// The event form's Repeat <select> is rebuilt per event so presets read from the
+// event's start date (e.g. "Weekly on Tuesday"). `pendingRecur` holds the rule
+// currently chosen; the Custom screen edits it in full.
+let pendingRecur = null; // recurrence object, or null for "Does not repeat"
+let recurAnchorKey = null; // the start date the presets are worded around
+const clone = (o) => (o ? JSON.parse(JSON.stringify(o)) : o);
+
+// Build the preset <option> list for a given start date. "Monthly on the last
+// day" only appears when the start date is itself the last day of its month.
+function buildRepeatSelect(anchorKey) {
   const sel = $("#eventRepeat");
   if (!sel) return;
-  sel.value = repeat && repeat !== "none" ? repeat : "none";
-  $("#eventRepeatDays").value = Array.isArray(days) ? days.join(", ") : "";
-  syncRepeatDaysVisibility();
+  const s = parseKey(anchorKey);
+  const opts = [
+    ["none", "Does not repeat"],
+    ["daily", "Daily"],
+    ["weekly", `Weekly on ${WEEKDAYS_FULL[s.getDay()]}`],
+    ["monthly", `Monthly on day ${s.getDate()}`],
+  ];
+  if (isLastDayOfMonth(s)) opts.push(["lastday", "Monthly on the last day"]);
+  opts.push(["yearly", `Annually on ${MONTHS_FULL[s.getMonth()].slice(0, 3)} ${s.getDate()}`]);
+  opts.push(["weekdays", "Every weekday (Mon–Fri)"]);
+  opts.push(["custom", "Custom…"]);
+  sel.innerHTML = opts.map(([v, l]) => `<option value="${v}">${escapeHtml(l)}</option>`).join("");
 }
-// Parse the free-text "days of month" box into a sorted, de-duped 1–31 list.
-function parseMonthDays(str) {
-  const days = (str || "")
-    .split(/[\s,]+/)
-    .map((s) => parseInt(s, 10))
-    .filter((n) => Number.isInteger(n) && n >= 1 && n <= 31);
-  return [...new Set(days)].sort((a, b) => a - b);
-}
-// Read the repeat controls back into { repeat, days }.
-function getEventRepeat() {
-  const sel = $("#eventRepeat");
-  const repeat = sel ? sel.value : "none";
-  if (repeat === "monthdays") {
-    const days = parseMonthDays($("#eventRepeatDays").value);
-    // No valid days entered → treat as non-recurring rather than an empty rule.
-    return days.length ? { repeat, days } : { repeat: "none", days: [] };
+function presetToRecur(value, anchorKey) {
+  const s = parseKey(anchorKey);
+  switch (value) {
+    case "daily":
+      return { freq: "daily", interval: 1, ends: { type: "never" } };
+    case "weekly":
+      return { freq: "weekly", interval: 1, weekdays: [s.getDay()], ends: { type: "never" } };
+    case "monthly":
+      return { freq: "monthly", interval: 1, monthMode: "day", ends: { type: "never" } };
+    case "lastday":
+      return { freq: "monthly", interval: 1, monthMode: "lastday", ends: { type: "never" } };
+    case "yearly":
+      return { freq: "yearly", interval: 1, ends: { type: "never" } };
+    case "weekdays":
+      return { freq: "weekly", interval: 1, weekdays: [1, 2, 3, 4, 5], ends: { type: "never" } };
+    default:
+      return null;
   }
-  return { repeat, days: [] };
+}
+// Which preset (if any) a rule corresponds to — else "custom".
+function matchPresetValue(recur, anchorKey) {
+  if (!recur || !recur.freq) return "none";
+  const s = parseKey(anchorKey);
+  const simple = (!recur.ends || recur.ends.type === "never") && (recur.interval || 1) === 1;
+  if (!simple) return "custom";
+  if (recur.freq === "daily") return "daily";
+  if (recur.freq === "yearly") return "yearly";
+  if (recur.freq === "weekly") {
+    const wds = (recur.weekdays || []).slice().sort((a, b) => a - b);
+    if (wds.length === 1 && wds[0] === s.getDay()) return "weekly";
+    if (wds.length === 5 && wds.every((x) => x >= 1 && x <= 5)) return "weekdays";
+    return "custom";
+  }
+  if (recur.freq === "monthly") {
+    if (recur.monthMode === "lastday") return isLastDayOfMonth(s) ? "lastday" : "custom";
+    if (recur.monthMode === "weekday") return "custom";
+    return "monthly";
+  }
+  return "custom";
+}
+// Migrate an older event's legacy repeat into the new recurrence object.
+function legacyToRecur(e) {
+  const s = parseKey(e.date);
+  switch (e.repeat) {
+    case "daily":
+      return { freq: "daily", interval: 1, ends: { type: "never" } };
+    case "weekly":
+      return { freq: "weekly", interval: 1, weekdays: [s.getDay()], ends: { type: "never" } };
+    case "monthly":
+    case "monthdays":
+      return { freq: "monthly", interval: 1, monthMode: "day", ends: { type: "never" } };
+    default:
+      return null;
+  }
+}
+function ensureCustomOptionLabel(v) {
+  const sel = $("#eventRepeat");
+  if (!sel) return;
+  const opt = [...sel.options].find((o) => o.value === "custom");
+  if (!opt) return;
+  opt.textContent =
+    v === "custom" && pendingRecur
+      ? "Custom: " + recurSummary({ recur: pendingRecur, date: recurAnchorKey })
+      : "Custom…";
+}
+// Point the form's picker at an event (or null for a new one).
+function initRepeatForForm(anchorKey, event) {
+  recurAnchorKey = anchorKey || isoDate(new Date());
+  pendingRecur =
+    event && event.recur && event.recur.freq ? clone(event.recur) : event ? legacyToRecur(event) : null;
+  buildRepeatSelect(recurAnchorKey);
+  const v = matchPresetValue(pendingRecur, recurAnchorKey);
+  ensureCustomOptionLabel(v);
+  $("#eventRepeat").value = v;
+}
+function getEventRepeat() {
+  return { recur: pendingRecur };
+}
+function onRepeatSelectChange() {
+  const v = $("#eventRepeat").value;
+  if (v === "custom") {
+    openRecurEditor();
+  } else {
+    pendingRecur = presetToRecur(v, recurAnchorKey);
+    ensureCustomOptionLabel(v);
+  }
+}
+
+// ---- Custom recurrence screen ----
+let recurEditorApplied = false;
+let recurEditorReturnValue = "none"; // select value to restore if cancelled
+function buildWeekdayChips() {
+  const wrap = $("#recurWeekdays");
+  if (!wrap || wrap.dataset.built) return;
+  wrap.dataset.built = "1";
+  const labels = ["S", "M", "T", "W", "T", "F", "S"]; // Sunday-first
+  wrap.innerHTML = labels
+    .map((l, i) => `<button type="button" class="recur-wd" data-wd="${i}" aria-label="${WEEKDAYS_FULL[i]}">${l}</button>`)
+    .join("");
+  wrap.querySelectorAll(".recur-wd").forEach((b) => b.addEventListener("click", () => b.classList.toggle("on")));
+}
+function buildMonthModeOptions() {
+  const sel = $("#recurMonthMode");
+  const s = parseKey(recurAnchorKey);
+  const nth = NTH_WORD[nthWeekdayOfMonth(s)] || nthWeekdayOfMonth(s) + "th";
+  const opts = [
+    ["day", `On day ${s.getDate()}`],
+    ["weekday", `On the ${nth} ${WEEKDAYS_FULL[s.getDay()]}`],
+    ["lastday", "On the last day of the month"],
+  ];
+  sel.innerHTML = opts.map(([v, l]) => `<option value="${v}">${escapeHtml(l)}</option>`).join("");
+}
+function syncRecurSections() {
+  const unit = $("#recurUnit").value;
+  $("#recurWeekly").classList.toggle("hidden", unit !== "weekly");
+  $("#recurMonthly").classList.toggle("hidden", unit !== "monthly");
+}
+function fillRecurEditor(r) {
+  $("#recurInterval").value = Math.max(1, r.interval || 1);
+  $("#recurUnit").value = r.freq || "weekly";
+  const wds = r.weekdays && r.weekdays.length ? r.weekdays : [parseKey(recurAnchorKey).getDay()];
+  $("#recurWeekdays")
+    .querySelectorAll(".recur-wd")
+    .forEach((b) => b.classList.toggle("on", wds.includes(+b.dataset.wd)));
+  $("#recurMonthMode").value = r.monthMode || "day";
+  const ends = r.ends || { type: "never" };
+  document.querySelectorAll('input[name="recurEnd"]').forEach((rb) => (rb.checked = rb.value === (ends.type || "never")));
+  $("#recurEndDate").value = ends.date || "";
+  $("#recurEndCount").value = ends.count || 13;
+  syncRecurSections();
+}
+function readRecurEditor() {
+  const freq = $("#recurUnit").value;
+  const interval = Math.max(1, parseInt($("#recurInterval").value, 10) || 1);
+  const recur = { freq, interval, ends: { type: "never" } };
+  if (freq === "weekly") {
+    const wds = [...$("#recurWeekdays").querySelectorAll(".recur-wd.on")].map((b) => +b.dataset.wd);
+    recur.weekdays = wds.length ? wds.sort((a, b) => a - b) : [parseKey(recurAnchorKey).getDay()];
+  }
+  if (freq === "monthly") recur.monthMode = $("#recurMonthMode").value;
+  const endType = (document.querySelector('input[name="recurEnd"]:checked') || {}).value || "never";
+  if (endType === "onDate") recur.ends = { type: "onDate", date: $("#recurEndDate").value || "" };
+  else if (endType === "after")
+    recur.ends = { type: "after", count: Math.max(1, parseInt($("#recurEndCount").value, 10) || 1) };
+  return recur;
+}
+function openRecurEditor() {
+  recurEditorApplied = false;
+  recurEditorReturnValue = matchPresetValue(pendingRecur, recurAnchorKey);
+  buildWeekdayChips();
+  buildMonthModeOptions();
+  const seed =
+    pendingRecur && pendingRecur.freq
+      ? clone(pendingRecur)
+      : { freq: "weekly", interval: 1, weekdays: [parseKey(recurAnchorKey).getDay()], monthMode: "day", ends: { type: "never" } };
+  fillRecurEditor(seed);
+  $("#recurEditor").classList.remove("hidden");
+  pushOverlayState(); // Back / tap-away closes the custom screen, not the app
+}
+function closeRecurEditor() {
+  $("#recurEditor").classList.add("hidden");
+  if (!recurEditorApplied) {
+    // Cancelled: revert the "Custom…" selection to whatever was chosen before.
+    $("#eventRepeat").value = recurEditorReturnValue;
+    ensureCustomOptionLabel(recurEditorReturnValue);
+  }
 }
 
 // A single optional emoji shown before the event title. Quick-pick buttons fill
@@ -2188,15 +2569,17 @@ function renderCalendar() {
   const month = calMonth.getMonth();
   $("#calLabel").textContent = `${MONTHS_FULL[month]} ${year}`;
 
-  // 6-week window starting on the Monday on/before the 1st.
-  const gridStart = startOfWeek(new Date(year, month, 1));
+  // 6-week window starting on the Sunday on/before the 1st (weeks begin Sunday).
+  const gridStart = startOfWeekSun(new Date(year, month, 1));
   const todayKey = isoDate(new Date());
   hideWeekPop();
   grid.innerHTML = "";
 
   for (let w = 0; w < 6; w++) {
     const rowStart = new Date(gridStart.getFullYear(), gridStart.getMonth(), gridStart.getDate() + w * 7);
-    const wkKey = isoDate(rowStart); // this row's Monday = the Planner week key
+    // Rows start Sunday, but the Planner week is Mon–Sun; the "R" bubble tracks
+    // the Monday that falls in this row (rowStart + 1 day).
+    const wkKey = weekKeyOf(new Date(rowStart.getFullYear(), rowStart.getMonth(), rowStart.getDate() + 1));
     const row = document.createElement("div");
     row.className = "cal-week-row";
 
@@ -2223,8 +2606,13 @@ function renderCalendar() {
       if (d.getMonth() !== month) cell.classList.add("other-month");
       if (key === todayKey) cell.classList.add("today");
 
-      // Events plus any to-do items due that day (the to-do↔calendar sync).
+      // Katie's payday, then events, then any to-do items due that day.
       const chips = [
+        ...(isKatiePayday(key)
+          ? [
+              `<div class="cal-event payday"><span class="pay-ico">$</span><span class="cal-event-title">${escapeHtml(paydayLabel())}</span></div>`,
+            ]
+          : []),
         ...eventsOnDay(key).map(
           (e) =>
             `<div class="cal-event ${personClass(e.person)}">${personBubbles(e.person)}<span class="cal-event-title">${e.emoji ? `<span class="ev-emoji">${e.emoji}</span>` : ""}${escapeHtml(e.title)}</span></div>`
@@ -2397,7 +2785,18 @@ function renderDayEvents() {
   list.innerHTML = "";
   const dayEvents = eventsOnDay(dayEditorDate);
   const dayTodos = todosDueOn(dayEditorDate);
-  $("#dayEventEmpty").classList.toggle("hidden", dayEvents.length + dayTodos.length > 0);
+  const payday = isKatiePayday(dayEditorDate);
+  $("#dayEventEmpty").classList.toggle("hidden", dayEvents.length + dayTodos.length + (payday ? 1 : 0) > 0);
+  // Katie's payday — a read-only marker (not a stored/editable event).
+  if (payday) {
+    const row = document.createElement("div");
+    row.className = "event-row payday-row";
+    row.innerHTML = `
+      <span class="pay-ico">$</span>
+      <span class="event-title">${escapeHtml(paydayLabel())}</span>
+      <span class="day-todo-tag pay-tag">Payday</span>`;
+    list.appendChild(row);
+  }
   dayEvents.forEach((e) => {
     const row = document.createElement("div");
     row.className = "event-row" + (e.id === editingEventId ? " editing" : "");
@@ -2442,7 +2841,7 @@ function startEditEvent(e) {
   setEventPerson(e.person);
   $("#addEventTitle").value = e.title;
   setEventTime(e.time || "");
-  setEventRepeat(e.repeat, e.days);
+  initRepeatForForm(e.date, e); // presets read from the event's start date
   setEventEmoji(e.emoji || "");
   $("#addEventSubmit").textContent = "Save";
   setDayEditorMode("form"); // show the prompts, populated for editing
@@ -2454,7 +2853,7 @@ function resetEventForm() {
   setEventPerson("0");
   $("#addEventTitle").value = "";
   setEventTime("");
-  setEventRepeat("none");
+  initRepeatForForm(dayEditorDate, null);
   setEventEmoji("");
   $("#addEventSubmit").textContent = "Add";
 }
@@ -2473,7 +2872,7 @@ $("#addEventForm").addEventListener("submit", (e) => {
   const title = $("#addEventTitle").value.trim();
   if (!title || !dayEditorDate) return;
   const time = getEventTime();
-  const { repeat, days } = getEventRepeat();
+  const { recur } = getEventRepeat();
   const emoji = getEventEmoji();
   if (editingEventId) {
     const ev = events.find((x) => x.id === editingEventId);
@@ -2481,8 +2880,9 @@ $("#addEventForm").addEventListener("submit", (e) => {
       ev.title = title;
       ev.person = eventPerson;
       ev.time = time;
-      ev.repeat = repeat;
-      ev.days = days;
+      ev.recur = recur; // the new recurrence model
+      delete ev.repeat; // drop legacy fields so occursOn uses `recur`
+      delete ev.days;
       ev.emoji = emoji;
     }
   } else {
@@ -2492,8 +2892,7 @@ $("#addEventForm").addEventListener("submit", (e) => {
       title,
       person: eventPerson,
       time,
-      repeat,
-      days,
+      recur,
       emoji,
     });
   }
@@ -2514,7 +2913,24 @@ document.addEventListener("keydown", (e) => {
 });
 buildEventTimeOptions();
 buildEmojiPicker();
-$("#eventRepeat").addEventListener("change", syncRepeatDaysVisibility);
+$("#eventRepeat").addEventListener("change", onRepeatSelectChange);
+// Custom recurrence screen wiring.
+$("#recurUnit").addEventListener("change", syncRecurSections);
+$("#recurDone").addEventListener("click", () => {
+  recurEditorApplied = true;
+  pendingRecur = readRecurEditor();
+  const v = matchPresetValue(pendingRecur, recurAnchorKey);
+  ensureCustomOptionLabel(v);
+  $("#eventRepeat").value = v;
+  dismissOverlays(); // pops the overlay history entry, closing the screen
+});
+$("#recurCancel").addEventListener("click", dismissOverlays);
+$("#recurEditor").addEventListener("click", (e) => {
+  if (e.target === $("#recurEditor")) dismissOverlays();
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !$("#recurEditor").classList.contains("hidden")) dismissOverlays();
+});
 $("#eventEmojiBtn").addEventListener("click", (e) => {
   e.stopPropagation();
   toggleEmojiPicker();
@@ -2606,21 +3022,40 @@ function renderHome() {
     grid.appendChild(card);
   }
 
-  // — Today's calendar events —
-  const dayEvents = eventsOnDay(todayKey);
+  // — Calendar events for the next 7 days (plus Katie's paydays) —
   {
     const card = dashCard("Calendar", () => activateTab("calendar"));
     const body = card.querySelector(".dash-body");
-    if (!dayEvents.length) body.appendChild(dashEmpty("Nothing scheduled today."));
+    // Merge real events and payday markers into one date-ordered list.
+    const rows = [];
+    for (let i = 0; i < 7; i++) {
+      const d = new Date();
+      d.setDate(d.getDate() + i);
+      const key = isoDate(d);
+      if (isKatiePayday(key)) rows.push({ key, payday: true });
+      eventsOnDay(key).forEach((e) => rows.push({ key, ev: e }));
+    }
+    if (!rows.length) body.appendChild(dashEmpty("Nothing scheduled in the next 7 days."));
     else
-      dayEvents.forEach((e) => {
+      rows.forEach(({ key, ev, payday }) => {
         const row = document.createElement("div");
-        row.className = "dash-row event-row-dash";
-        row.innerHTML =
-          `<span class="event-bubbles">${personBubbles(e.person)}</span>` +
-          (e.time ? `<span class="dash-time">${fmtTime(e.time)}</span>` : "") +
-          `<span class="dash-row-title">${e.emoji ? `<span class="ev-emoji">${e.emoji}</span>` : ""}${escapeHtml(e.title)}</span>`;
-        row.addEventListener("click", () => openDayEditor(todayKey));
+        const dayTag = `<span class="dash-day">${dashDayLabel(key)}</span>`;
+        if (payday) {
+          row.className = "dash-row event-row-dash payday-row";
+          row.innerHTML =
+            dayTag +
+            `<span class="pay-ico">$</span>` +
+            `<span class="dash-row-title">${escapeHtml(paydayLabel())}</span>`;
+          row.addEventListener("click", () => openDayEditor(key));
+        } else {
+          row.className = "dash-row event-row-dash";
+          row.innerHTML =
+            dayTag +
+            `<span class="event-bubbles">${personBubbles(ev.person)}</span>` +
+            (ev.time ? `<span class="dash-time">${fmtTime(ev.time)}</span>` : "") +
+            `<span class="dash-row-title">${ev.emoji ? `<span class="ev-emoji">${ev.emoji}</span>` : ""}${escapeHtml(ev.title)}</span>`;
+          row.addEventListener("click", () => openDayEditor(key));
+        }
         body.appendChild(row);
       });
     grid.appendChild(card);
@@ -2643,6 +3078,8 @@ function renderHome() {
           `<span class="q-dot q${t.quadrant}"></span>` +
           `<span class="dash-row-title">${escapeHtml(t.title)}</span>` +
           `<span class="dash-due${isOverdue(t.due) && !t.done ? " overdue" : ""}">${fmtDue(t.due)}</span>`;
+        // Check the task off (by person / both) right here on the dashboard.
+        row.insertBefore(todoDoneControl(t), row.firstChild);
         row.addEventListener("click", () => openTodoEditor(t.quadrant, t.id));
         body.appendChild(row);
       });
@@ -2715,11 +3152,26 @@ function maybeSeedChores() {
 function loadTracker() {
   try {
     const t = JSON.parse(localStorage.getItem(TRACKER_KEY));
-    if (t && typeof t === "object" && Array.isArray(t.items)) return { items: normalizeChores(t.items) };
+    if (t && typeof t === "object" && Array.isArray(t.items)) return normalizeTracker(t);
   } catch {
     /* ignore */
   }
-  return { items: [] };
+  return { items: [], cats: [] };
+}
+// Normalise a stored/synced tracker: its chore items plus the ordered category
+// spine (`cats` = [{name, subs:[]}]) that preserves order and empty categories.
+function normalizeTracker(t) {
+  const items = t && Array.isArray(t.items) ? normalizeChores(t.items) : [];
+  const cats =
+    t && Array.isArray(t.cats)
+      ? t.cats
+          .filter((c) => c && typeof c.name === "string")
+          .map((c) => ({
+            name: c.name,
+            subs: Array.isArray(c.subs) ? c.subs.filter((s) => typeof s === "string") : [],
+          }))
+      : [];
+  return { items, cats };
 }
 // Per-person completion COUNTS: done = { "0": { "2026-07-30": 2 }, "1": {…} }.
 // A chore can be logged multiple times a day, so each date maps to a tally.
@@ -2741,6 +3193,8 @@ function normalizeChores(items) {
     // very old single `dates` array → attribute past checks to Andrew
     if (Array.isArray(item.dates)) item.dates.forEach((d) => (done["0"][d] = (done["0"][d] || 0) + 1));
     item.done = done;
+    // Which person this chore is assigned to on the Assigned board ("" = nobody).
+    item.assignee = item.assignee === "0" || item.assignee === "1" ? item.assignee : "";
     delete item.dates;
     delete item.person;
   });
@@ -2851,61 +3305,312 @@ function pipBoxes(a, k) {
   for (let i = 0; i < k && shown < max; i++, shown++) pips += '<i class="pip k"></i>';
   return total > max ? `${pips}<span class="pipn">${total}</span>` : pips;
 }
+// A bold, unmistakable flame (warm orange with a yellow core) for a kept streak.
 function flameIcon() {
-  return `<svg viewBox="0 0 24 24" width="11" height="11" aria-hidden="true"><path fill="currentColor" d="M12 23a7 7 0 0 1-7-7c0-2.2 1.1-4.1 2.6-6C9 8 10 6 10 3.2c3 2 4.4 4 5 6.2C15.6 11.6 19 13.5 19 16a7 7 0 0 1-7 7z"/></svg>`;
+  return `<svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" class="streak-ico">
+    <path fill="#ff7a18" d="M13 2c.6 2.7-.4 4.6-1.9 6.3C9.4 10.2 7 12.1 7 15.4A6.4 6.4 0 0 0 13.4 22a6.2 6.2 0 0 0 6.2-6.2c0-2.5-1.3-4.3-2.8-6-1.3-1.5-2.5-3-2.4-5-1 .9-1.7 2-2 3.3C11.9 6 12.7 3.9 13 2z"/>
+    <path fill="#ffd23d" d="M12.8 12.4c1 1 1.7 2.1 1.7 3.4a2.8 2.8 0 0 1-5.2 1.4c1 .3 2-.2 2.4-1.1.5-1 .1-2.1-.3-3 .5-.2 1-.5 1.4-.7z"/>
+  </svg>`;
+}
+// A cool snowflake shown when a streak is active but today's chore isn't done
+// yet — the streak is "frozen" until it's completed today.
+function iceIcon() {
+  return `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="#63c9ff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="streak-ico">
+    <line x1="12" y1="2.5" x2="12" y2="21.5"/>
+    <line x1="3.7" y1="7.2" x2="20.3" y2="16.8"/>
+    <line x1="20.3" y1="7.2" x2="3.7" y2="16.8"/>
+    <path d="M12 6.2 10.2 8M12 6.2 13.8 8M12 17.8 10.2 16M12 17.8 13.8 16"/>
+  </svg>`;
+}
+
+// Inline "add" state: which affordance is currently expanded into a text input.
+// { kind:"roomChore"|"subChore"|"newSub"|"newCat", cat?, sub? } or null.
+let choreAdd = null;
+const SUBSEP = String.fromCharCode(31); // delimiter for a room+sub collapse key
+const choreId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
+
+// Ensure `tracker.cats` (the ordered category spine, with sub-category lists)
+// represents every category/sub-category used by a chore. First run seeds it in
+// a sensible default order; afterwards it only appends anything missing.
+function ensureCats() {
+  if (!Array.isArray(tracker.cats)) tracker.cats = [];
+  if (!tracker.cats.length && tracker.items.length) {
+    [...new Set(tracker.items.map((it) => (it.category || "").trim()).filter(Boolean))]
+      .sort(choreCatSort)
+      .forEach((name) => tracker.cats.push({ name, subs: [] }));
+  }
+  const byName = new Map(tracker.cats.map((c) => [c.name, c]));
+  tracker.items.forEach((it) => {
+    const cn = (it.category || "").trim();
+    if (!cn) return;
+    let c = byName.get(cn);
+    if (!c) {
+      c = { name: cn, subs: [] };
+      tracker.cats.push(c);
+      byName.set(cn, c);
+    }
+    const sn = (it.subcategory || "").trim();
+    if (sn && !c.subs.includes(sn)) c.subs.push(sn);
+  });
 }
 
 function renderChores() {
-  renderChoreCatOptions();
-
+  ensureCats();
   const list = $("#choreList");
   list.innerHTML = "";
   const items = tracker.items;
-  if (!items.length) {
-    $("#choreEmpty").textContent = "No items yet. Add a daily chore or habit to start tracking.";
-    $("#choreEmpty").classList.remove("hidden");
-    return;
-  }
-  $("#choreEmpty").classList.add("hidden");
 
-  const groups = {};
+  // Group chores by category for quick lookup.
+  const byCat = {};
   items.forEach((it) => {
     const c = (it.category || "").trim();
-    (groups[c] ||= []).push(it);
+    (byCat[c] ||= []).push(it);
   });
+
   if (!choreCollapseSeeded) {
-    Object.keys(groups).forEach((cat) => choreCollapsed.add(cat)); // start every room collapsed
+    tracker.cats.forEach((c) => choreCollapsed.add(c.name)); // rooms start collapsed
     choreCollapseSeeded = true;
   }
-  Object.keys(groups)
-    .sort(choreCatSort)
-    .forEach((cat) => {
-      const collapsed = choreCollapsed.has(cat);
-      const section = document.createElement("div");
-      section.className = "chore-group" + (collapsed ? " collapsed" : "");
-      const header = document.createElement("h3");
-      header.className = "chore-cat";
-      header.innerHTML = `<span class="chev">${collapsed ? "▸" : "▾"}</span> ${escapeHtml(cat || "Other")} <span class="cat-count">${groups[cat].length}</span>`;
-      header.addEventListener("click", () => {
-        choreCollapsed.has(cat) ? choreCollapsed.delete(cat) : choreCollapsed.add(cat);
-        renderChores();
-      });
-      const itemsWrap = document.createElement("div");
-      itemsWrap.className = "chore-items";
-      // Chores with no sub-category sit directly under the room; the rest are
-      // grouped under an optional sub-category heading.
-      const { noSub, subs, subNames } = splitBySub(groups[cat]);
-      noSub.forEach((it) => itemsWrap.appendChild(choreRow(it)));
-      subNames.forEach((sub) => {
-        const subHead = document.createElement("div");
-        subHead.className = "chore-subcat";
-        subHead.innerHTML = `${escapeHtml(sub)} <span class="cat-count">${subs[sub].length}</span>`;
-        itemsWrap.appendChild(subHead);
-        subs[sub].forEach((it) => itemsWrap.appendChild(choreRow(it)));
-      });
-      section.append(header, itemsWrap);
-      list.appendChild(section);
+
+  const hasAnything = tracker.cats.length || items.length;
+  $("#choreEmpty").classList.toggle("hidden", Boolean(hasAnything));
+
+  tracker.cats.forEach((catObj, idx) => {
+    list.appendChild(renderChoreCategory(catObj, idx, byCat[catObj.name] || []));
+  });
+
+  // Legacy chores with no category — a plain trailing bucket (no edit controls).
+  if ((byCat[""] || []).length) {
+    const section = document.createElement("div");
+    section.className = "chore-group";
+    const header = document.createElement("h3");
+    header.className = "chore-cat";
+    header.innerHTML = `<span class="cat-name">Uncategorised</span> <span class="cat-count">${byCat[""].length}</span>`;
+    const itemsWrap = document.createElement("div");
+    itemsWrap.className = "chore-items";
+    byCat[""].forEach((it) => itemsWrap.appendChild(choreRow(it)));
+    section.append(header, itemsWrap);
+    list.appendChild(section);
+  }
+
+  // "＋ Category" at the very bottom of the list (styled like "＋ sub-category").
+  if (choreAdd && choreAdd.kind === "newCat") {
+    list.appendChild(inlineAddInput("New category name", "chore-inline-cat", (v) => addCategory(v)));
+  } else {
+    const addCat = document.createElement("button");
+    addCat.type = "button";
+    addCat.className = "chore-add-cat";
+    addCat.textContent = "＋ Category";
+    addCat.addEventListener("click", () => {
+      choreAdd = { kind: "newCat" };
+      renderChores();
     });
+    list.appendChild(addCat);
+  }
+}
+
+function renderChoreCategory(catObj, idx, roomChores) {
+  const cat = catObj.name;
+  const collapsed = choreCollapsed.has(cat);
+  const section = document.createElement("div");
+  section.className = "chore-group" + (collapsed ? " collapsed" : "");
+
+  const header = document.createElement("h3");
+  header.className = "chore-cat";
+  header.innerHTML = `<span class="chev">${collapsed ? "▸" : "▾"}</span> <span class="cat-name">${escapeHtml(cat)}</span> <span class="cat-count">${roomChores.length}</span>`;
+  header.addEventListener("click", () => {
+    toggleCollapse(cat);
+    renderChores();
+  });
+  // Right-side controls: Edit-mode reorder/delete + the subtle quick-add "+".
+  const actions = document.createElement("span");
+  actions.className = "chore-cat-actions";
+  actions.appendChild(choreCatEditControls(idx, catObj, roomChores.length));
+  actions.appendChild(
+    choreAddMini(`Add a chore to ${cat}`, () => {
+      choreCollapsed.delete(cat);
+      choreAdd = { kind: "roomChore", cat };
+      renderChores();
+    })
+  );
+  header.appendChild(actions);
+
+  const itemsWrap = document.createElement("div");
+  itemsWrap.className = "chore-items";
+
+  // General chores (no sub-category) sit directly under the room.
+  const { noSub, subs } = splitBySub(roomChores);
+  noSub.forEach((it) => itemsWrap.appendChild(choreRow(it)));
+  if (choreAdd && choreAdd.kind === "roomChore" && choreAdd.cat === cat) {
+    itemsWrap.appendChild(inlineAddInput(`Add to ${cat}…`, "", (v) => addChoreTo(cat, "", v)));
+  }
+
+  // Each sub-category is its own collapsible header beneath the general chores.
+  // Rooms with no sub-category render no sub-heading at all.
+  catObj.subs.forEach((sub) => {
+    const subKey = cat + SUBSEP + sub;
+    const subCollapsed = choreCollapsed.has(subKey);
+    const subChores = subs[sub] || [];
+    const subGroup = document.createElement("div");
+    subGroup.className = "chore-subgroup" + (subCollapsed ? " collapsed" : "");
+    const subHead = document.createElement("div");
+    subHead.className = "chore-subcat";
+    subHead.innerHTML = `<span class="chev">${subCollapsed ? "▸" : "▾"}</span> <span class="cat-name">${escapeHtml(sub)}</span> <span class="cat-count">${subChores.length}</span>`;
+    subHead.addEventListener("click", () => {
+      toggleCollapse(subKey);
+      renderChores();
+    });
+    subHead.appendChild(
+      choreAddMini(`Add a chore to ${sub}`, () => {
+        choreCollapsed.delete(subKey);
+        choreAdd = { kind: "subChore", cat, sub };
+        renderChores();
+      })
+    );
+    const subItems = document.createElement("div");
+    subItems.className = "chore-subitems";
+    subChores.forEach((it) => subItems.appendChild(choreRow(it)));
+    if (choreAdd && choreAdd.kind === "subChore" && choreAdd.cat === cat && choreAdd.sub === sub) {
+      subItems.appendChild(inlineAddInput(`Add to ${sub}…`, "", (v) => addChoreTo(cat, sub, v)));
+    }
+    subGroup.append(subHead, subItems);
+    itemsWrap.appendChild(subGroup);
+  });
+
+  // Subtle, indented affordance to start a brand-new sub-category in this room.
+  if (choreAdd && choreAdd.kind === "newSub" && choreAdd.cat === cat) {
+    itemsWrap.appendChild(inlineAddInput("New sub-category name", "chore-inline-sub", (v) => addSubcategory(cat, v)));
+  } else {
+    const addSub = document.createElement("button");
+    addSub.type = "button";
+    addSub.className = "chore-add-sub";
+    addSub.textContent = "＋ sub-category";
+    addSub.addEventListener("click", () => {
+      choreAdd = { kind: "newSub", cat };
+      renderChores();
+    });
+    itemsWrap.appendChild(addSub);
+  }
+
+  section.append(header, itemsWrap);
+  return section;
+}
+function toggleCollapse(key) {
+  choreCollapsed.has(key) ? choreCollapsed.delete(key) : choreCollapsed.add(key);
+}
+// A small, subtle circular "+" used on room and sub-category headers.
+function choreAddMini(title, onClick) {
+  const b = document.createElement("button");
+  b.type = "button";
+  b.className = "chore-add-mini";
+  b.textContent = "+";
+  b.title = title;
+  b.setAttribute("aria-label", title);
+  b.addEventListener("click", (e) => {
+    e.stopPropagation(); // don't toggle the header's collapse
+    onClick();
+  });
+  return b;
+}
+// A one-line inline add: text box + Add + cancel. Stays open after each add so
+// several items can be entered in a row; Escape / ✕ closes it.
+function inlineAddInput(placeholder, extraClass, onSubmit) {
+  const form = document.createElement("form");
+  form.className = "chore-inline-add" + (extraClass ? " " + extraClass : "");
+  const input = document.createElement("input");
+  input.type = "text";
+  input.placeholder = placeholder;
+  input.autocomplete = "off";
+  const ok = document.createElement("button");
+  ok.type = "submit";
+  ok.className = "chore-inline-ok";
+  ok.textContent = "Add";
+  const cancel = document.createElement("button");
+  cancel.type = "button";
+  cancel.className = "chore-inline-cancel";
+  cancel.textContent = "✕";
+  cancel.setAttribute("aria-label", "Cancel");
+  form.append(input, ok, cancel);
+  form.addEventListener("submit", (e) => {
+    e.preventDefault();
+    const v = input.value.trim();
+    if (v) onSubmit(v);
+  });
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      choreAdd = null;
+      renderChores();
+    }
+  });
+  cancel.addEventListener("click", () => {
+    choreAdd = null;
+    renderChores();
+  });
+  requestAnimationFrame(() => input.focus());
+  return form;
+}
+function addChoreTo(cat, sub, name) {
+  tracker.items.push({ id: choreId(), name, category: cat, subcategory: sub, assignee: "", done: { "0": {}, "1": {} } });
+  ensureCats();
+  saveTracker();
+  renderChores(); // choreAdd stays set -> the input reopens (empty) for the next add
+}
+function addSubcategory(cat, sub) {
+  const c = tracker.cats.find((x) => x.name === cat);
+  if (c && !c.subs.includes(sub)) c.subs.push(sub);
+  choreCollapsed.delete(cat + SUBSEP + sub);
+  saveTracker();
+  choreAdd = { kind: "subChore", cat, sub }; // roll straight into adding chores to it
+  renderChores();
+}
+function addCategory(name) {
+  if (!tracker.cats.some((x) => x.name === name)) tracker.cats.push({ name, subs: [] });
+  choreCollapsed.delete(name);
+  saveTracker();
+  choreAdd = { kind: "roomChore", cat: name }; // roll straight into adding chores to it
+  renderChores();
+}
+// Edit-mode controls on a category header: reorder up/down + delete.
+function choreCatEditControls(idx, catObj, count) {
+  const wrap = document.createElement("span");
+  wrap.className = "chore-cat-edit";
+  const mk = (cls, label, title, onClick) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = cls;
+    b.textContent = label;
+    b.title = title;
+    b.setAttribute("aria-label", title);
+    b.addEventListener("click", (e) => {
+      e.stopPropagation();
+      onClick();
+    });
+    return b;
+  };
+  const up = mk("cat-move", "▲", "Move up", () => moveCategory(idx, -1));
+  const down = mk("cat-move", "▼", "Move down", () => moveCategory(idx, 1));
+  if (idx === 0) up.disabled = true;
+  if (idx === tracker.cats.length - 1) down.disabled = true;
+  const del = mk("cat-del", "✕", count ? "Delete category and its chores" : "Delete category", () =>
+    deleteCategory(catObj, count)
+  );
+  wrap.append(up, down, del);
+  return wrap;
+}
+function moveCategory(idx, dir) {
+  const j = idx + dir;
+  if (j < 0 || j >= tracker.cats.length) return;
+  const arr = tracker.cats;
+  [arr[idx], arr[j]] = [arr[j], arr[idx]];
+  saveTracker();
+  renderChores();
+}
+function deleteCategory(catObj, count) {
+  if (count && !confirm(`Delete "${catObj.name}" and its ${count} chore${count === 1 ? "" : "s"}?`)) return;
+  tracker.items = tracker.items.filter((it) => (it.category || "").trim() !== catObj.name);
+  tracker.cats = tracker.cats.filter((c) => c !== catObj);
+  saveTracker();
+  renderChores();
 }
 function choreCatSort(a, b) {
   const rank = (c) => {
@@ -2929,78 +3634,6 @@ function splitBySub(roomItems) {
   const subNames = Object.keys(subs).sort((a, b) => a.localeCompare(b));
   return { noSub, subs, subNames };
 }
-// The combined room/sub-category picker. Each selectable option is a "leaf" —
-// either a room (no sub-category) or a room + sub-category — indexed into
-// `choreCatLeaves`. `choreCatRooms` backs the per-room "＋ New sub-category…"
-// options. Both are rebuilt in lock-step here and read synchronously on submit.
-let choreCatLeaves = [];
-let choreCatRooms = [];
-function renderChoreCatOptions() {
-  const sel = $("#addChoreCat");
-  if (!sel) return;
-  const prev = currentChoreLeaf(); // remember the current pick to restore it after rebuild
-
-  // Map each room to its existing sub-categories (plus the seeded default rooms).
-  const roomSubs = {};
-  tracker.items.forEach((it) => {
-    const c = (it.category || "").trim();
-    if (!c) return;
-    (roomSubs[c] ||= new Set());
-    const s = (it.subcategory || "").trim();
-    if (s) roomSubs[c].add(s);
-  });
-  CHORE_CAT_ORDER.forEach((c) => (roomSubs[c] ||= new Set()));
-  const rooms = Object.keys(roomSubs).sort(choreCatSort);
-
-  choreCatLeaves = [];
-  choreCatRooms = rooms;
-  // A native <select> works reliably on mobile (unlike an <input list> datalist);
-  // rooms become <optgroup>s so their sub-categories nest visually.
-  let html = "";
-  rooms.forEach((room, ri) => {
-    html += `<optgroup label="${escapeHtml(room)}">`;
-    const roomLeaf = choreCatLeaves.push({ category: room, subcategory: "" }) - 1;
-    html += `<option value="leaf:${roomLeaf}">(no sub-category)</option>`;
-    [...roomSubs[room]].sort((a, b) => a.localeCompare(b)).forEach((sub) => {
-      const li = choreCatLeaves.push({ category: room, subcategory: sub }) - 1;
-      html += `<option value="leaf:${li}">${escapeHtml(sub)}</option>`;
-    });
-    html += `<option value="newsub:${ri}">＋ New sub-category…</option></optgroup>`;
-  });
-  html += `<option value="__new_room__">＋ New room…</option>`;
-  sel.innerHTML = html;
-
-  if (prev) selectChoreLeaf(prev.category, prev.subcategory);
-  syncNewChoreCat();
-}
-// The {category, subcategory} the picker currently points at, or null for a
-// "＋ New…" option (nothing concrete to restore).
-function currentChoreLeaf() {
-  const sel = $("#addChoreCat");
-  if (!sel) return null;
-  const v = sel.value;
-  return v.startsWith("leaf:") ? choreCatLeaves[+v.slice(5)] || null : null;
-}
-// Point the picker at an existing leaf; returns false if it no longer exists.
-function selectChoreLeaf(category, subcategory) {
-  const sel = $("#addChoreCat");
-  const i = choreCatLeaves.findIndex(
-    (l) => l.category === category && l.subcategory === (subcategory || "")
-  );
-  if (i !== -1) sel.value = "leaf:" + i;
-  return i !== -1;
-}
-// Reveal the text box (and label it) only for the "＋ New room/sub-category" options.
-function syncNewChoreCat() {
-  const v = $("#addChoreCat").value;
-  const isNewRoom = v === "__new_room__";
-  const isNewSub = v.startsWith("newsub:");
-  const box = $("#addChoreCatNew");
-  box.classList.toggle("hidden", !(isNewRoom || isNewSub));
-  if (isNewRoom) box.placeholder = "New room name";
-  else if (isNewSub) box.placeholder = `New sub-category in ${choreCatRooms[+v.slice(7)] || ""}`;
-}
-
 function renderActiveChoreView() {
   const isList = choreViewMode === "list";
   $("#choreEdit").classList.toggle("hidden", !isList); // "Edit" only applies to the checklist
@@ -3010,7 +3643,124 @@ function renderActiveChoreView() {
     $("#choreEdit").textContent = "Edit";
   }
   if (choreViewMode === "history") renderHistory();
+  else if (choreViewMode === "assigned") renderAssigned();
   else renderChores();
+}
+
+// ---- Assigned board: chores split into a column per person, plus an
+// "unassigned" pool. Assigning is done here; each assigned chore can be checked
+// off (a completion by that person for today), reassigned, or unassigned.
+function checkGlyph() {
+  return `<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`;
+}
+function setChoreAssignee(id, val) {
+  const item = tracker.items.find((x) => x.id === id);
+  if (!item) return;
+  item.assignee = val === "0" || val === "1" ? val : "";
+  saveTracker();
+  renderAssigned();
+}
+function clearChoreToday(item, p) {
+  const key = isoDate(new Date());
+  if (item.done && item.done[p] && item.done[p][key]) {
+    delete item.done[p][key];
+    saveTracker();
+  }
+}
+function assignedRow(item, pi) {
+  const p = String(pi);
+  const other = pi === 0 ? 1 : 0;
+  const today = isoDate(new Date());
+  const doneN = personCount(item, p, today);
+  const cls = pi === 0 ? "a" : "k";
+  const row = document.createElement("div");
+  row.className = "assigned-row" + (doneN > 0 ? " done" : "");
+  row.innerHTML = `
+    <button type="button" class="assigned-check ${cls}${doneN > 0 ? " on" : ""}" aria-label="Mark done today">${doneN > 0 ? checkGlyph() : ""}</button>
+    <span class="assigned-name">${escapeHtml(item.name)}</span>
+    <span class="assigned-actions">
+      <button type="button" class="assigned-move" title="Move to ${escapeHtml(personName(other))}" aria-label="Move to ${escapeHtml(personName(other))}">→${escapeHtml(personInitial(other))}</button>
+      <button type="button" class="assigned-unassign" title="Unassign" aria-label="Unassign">✕</button>
+    </span>`;
+  row.querySelector(".assigned-check").addEventListener("click", () => {
+    if (doneN > 0) clearChoreToday(item, p);
+    else incPersonDate(item, p, today);
+    renderAssigned();
+  });
+  row.querySelector(".assigned-move").addEventListener("click", () => setChoreAssignee(item.id, String(other)));
+  row.querySelector(".assigned-unassign").addEventListener("click", () => setChoreAssignee(item.id, ""));
+  return row;
+}
+function unassignedRow(item) {
+  const row = document.createElement("div");
+  row.className = "assigned-row unassigned-row";
+  row.innerHTML = `
+    <span class="assigned-name">${escapeHtml(item.name)}</span>
+    <span class="assigned-actions">
+      <button type="button" class="assign-to a" title="Assign to ${escapeHtml(personName(0))}" aria-label="Assign to ${escapeHtml(personName(0))}">${escapeHtml(personInitial(0))}</button>
+      <button type="button" class="assign-to k" title="Assign to ${escapeHtml(personName(1))}" aria-label="Assign to ${escapeHtml(personName(1))}">${escapeHtml(personInitial(1))}</button>
+    </span>`;
+  row.querySelector(".assign-to.a").addEventListener("click", () => setChoreAssignee(item.id, "0"));
+  row.querySelector(".assign-to.k").addEventListener("click", () => setChoreAssignee(item.id, "1"));
+  return row;
+}
+function renderAssigned() {
+  const cols = $("#assignedCols");
+  const unWrap = $("#assignedUnassigned");
+  if (!cols || !unWrap) return;
+  cols.innerHTML = "";
+  unWrap.innerHTML = "";
+
+  // One column per person.
+  [0, 1].forEach((pi) => {
+    const p = String(pi);
+    const mine = tracker.items.filter((it) => it.assignee === p);
+    const col = document.createElement("div");
+    col.className = "assigned-col " + (pi === 0 ? "col-a" : "col-k");
+    col.innerHTML =
+      `<div class="assigned-col-head"><span class="pbubble ${pi === 0 ? "a" : "k"}">${escapeHtml(personInitial(pi))}</span>` +
+      `<span class="assigned-col-name">${escapeHtml(personName(pi))}</span><span class="cat-count">${mine.length}</span></div>`;
+    const body = document.createElement("div");
+    body.className = "assigned-col-body";
+    if (!mine.length) {
+      const e = document.createElement("div");
+      e.className = "assigned-empty";
+      e.textContent = "No chores assigned.";
+      body.appendChild(e);
+    } else {
+      mine.forEach((it) => body.appendChild(assignedRow(it, pi)));
+    }
+    col.appendChild(body);
+    cols.appendChild(col);
+  });
+
+  // The unassigned pool, grouped by room.
+  const un = tracker.items.filter((it) => it.assignee !== "0" && it.assignee !== "1");
+  const head = document.createElement("div");
+  head.className = "assigned-un-head";
+  head.innerHTML = `Unassigned <span class="cat-count">${un.length}</span>`;
+  unWrap.appendChild(head);
+  if (!un.length) {
+    const e = document.createElement("div");
+    e.className = "assigned-empty";
+    e.textContent = "Everything's assigned.";
+    unWrap.appendChild(e);
+    return;
+  }
+  const groups = {};
+  un.forEach((it) => {
+    const c = (it.category || "").trim();
+    (groups[c] ||= []).push(it);
+  });
+  Object.keys(groups)
+    .sort(choreCatSort)
+    .forEach((cat) => {
+      const g = document.createElement("div");
+      g.className = "assigned-un-group";
+      g.innerHTML = `<div class="assigned-un-cat">${escapeHtml(cat || "Other")}</div>`;
+      groups[cat].forEach((it) => g.appendChild(unassignedRow(it)));
+      unWrap.appendChild(g);
+    });
 }
 
 $("#choreEdit").addEventListener("click", () => {
@@ -3070,7 +3820,13 @@ function choreRow(item) {
     <span class="chore-name">${escapeHtml(item.name)}</span>
     <span class="chore-marks">${pipBoxes(aN, kN)}</span>
     <span class="chore-tags">
-      ${streak >= 3 ? `<span class="streak-pill" title="${streak}-day streak">${flameIcon()} ${streak}</span>` : ""}
+      ${streak >= 3
+        ? `<span class="streak-pill ${done ? "hot" : "cold"}" title="${
+            done
+              ? streak + "-day streak — kept today!"
+              : streak + "-day streak — frozen; do it today to keep it going"
+          }">${done ? flameIcon() : iceIcon()} ${streak}</span>`
+        : ""}
     </span>
     <button class="chore-del" aria-label="Delete">✕</button>`;
   row.querySelectorAll(".pbtn").forEach((btn) => {
@@ -3103,61 +3859,12 @@ function choreRow(item) {
   return row;
 }
 
-$("#addChoreCat").addEventListener("change", () => {
-  syncNewChoreCat();
-  const v = $("#addChoreCat").value;
-  if (v === "__new_room__" || v.startsWith("newsub:")) $("#addChoreCatNew").focus();
-});
-$("#addChoreForm").addEventListener("submit", (e) => {
-  e.preventDefault();
-  const input = $("#addChoreInput");
-  const name = input.value.trim();
-  if (!name) return;
-  const catSel = $("#addChoreCat");
-  const newBox = $("#addChoreCatNew");
-  const v = catSel.value;
-  // Resolve the picked option into a room + optional sub-category.
-  let category = "";
-  let subcategory = "";
-  let created = false; // a new room/sub-category the picker doesn't list yet
-  if (v === "__new_room__") {
-    category = newBox.value.trim();
-    created = true;
-  } else if (v.startsWith("newsub:")) {
-    category = choreCatRooms[+v.slice(7)] || "";
-    subcategory = newBox.value.trim();
-    created = true;
-  } else if (v.startsWith("leaf:")) {
-    const leaf = choreCatLeaves[+v.slice(5)] || {};
-    category = leaf.category || "";
-    subcategory = leaf.subcategory || "";
-  }
-  tracker.items.push({
-    id: Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
-    name,
-    category,
-    subcategory,
-    done: { "0": {}, "1": {} },
-  });
-  saveTracker();
-  input.value = ""; // keep the category so you can add several to the same place
-  // A freshly created room/sub-category now exists — rebuild the picker and
-  // keep it selected so the next add lands in the same place.
-  if (created) {
-    renderChoreCatOptions();
-    selectChoreLeaf(category, subcategory);
-    syncNewChoreCat();
-    newBox.value = "";
-  }
-  renderChores();
-  input.focus();
-});
-
 document.querySelectorAll("#choreView .chip").forEach((btn) => {
   btn.addEventListener("click", () => {
     choreViewMode = btn.dataset.view;
     document.querySelectorAll("#choreView .chip").forEach((b) => b.classList.toggle("active", b === btn));
     $("#choreChecklist").classList.toggle("hidden", choreViewMode !== "list");
+    $("#choreAssigned").classList.toggle("hidden", choreViewMode !== "assigned");
     $("#choreHistory").classList.toggle("hidden", choreViewMode !== "history");
     renderActiveChoreView();
   });
@@ -3523,7 +4230,10 @@ async function init() {
     const cfg = await (await fetch("/api/config")).json();
     if (!cfg.hasKey) $("#keyBanner").classList.remove("hidden");
     syncEnabled = Boolean(cfg.storage);
+    household = cfg.household || "local";
     applyAccountInfo(cfg);
+    renderCalendarIfActive(); // paint Katie's paydays once the household is known
+    renderHomeIfActive();
     await initSync();
   } catch {
     /* server not reachable yet — ignore */
