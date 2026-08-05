@@ -647,6 +647,28 @@ button { font-family: inherit; }
 .person-color::-webkit-color-swatch-wrapper { padding: 2px; }
 .person-color::-webkit-color-swatch { border: none; border-radius: 50%; }
 .person-color::-moz-color-swatch { border: none; border-radius: 50%; }
+/* Household members list: one row per person (colour chip, name, remove). */
+.people-list { flex-basis: 100%; display: flex; flex-direction: column; gap: 8px; }
+.person-row { display: flex; align-items: center; gap: 8px; }
+.person-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 9px 11px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  color: var(--ink);
+  font-size: 0.95rem;
+}
+.person-name:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.person-remove,
+.person-remove-spacer { flex: none; width: 30px; height: 30px; }
+.person-remove {
+  display: inline-flex; align-items: center; justify-content: center;
+  border: none; border-radius: 8px; background: transparent;
+  color: var(--danger); font-size: 0.95rem; cursor: pointer;
+}
+.person-remove:hover { background: var(--bg); }
 .names-editor-actions {
   display: flex;
   gap: 8px;
@@ -1144,11 +1166,9 @@ button { font-family: inherit; }
   touch-action: manipulation;
   transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
 }
-.todo-doneby.a { color: var(--green); }
-.todo-doneby.k { color: var(--katie); }
+.todo-doneby { color: var(--pc, var(--muted)); }
 .todo-doneby:hover { border-color: currentColor; }
-.todo-doneby.on.a { background: var(--green); border-color: var(--green); color: #fff; }
-.todo-doneby.on.k { background: var(--katie); border-color: var(--katie); color: #fff; }
+.todo-doneby.on { background: var(--pc); border-color: var(--pc); color: var(--pc-ink); }
 .todo-body { flex: 1; min-width: 0; cursor: pointer; }
 .todo-title { font-size: 0.92rem; line-height: 1.28; }
 /* Completed: struck through but kept legible (thin line, near-full contrast). */
@@ -1166,9 +1186,9 @@ button { font-family: inherit; }
   border-radius: 999px;
   white-space: nowrap;
 }
-.todo-doneby-tag.a { color: var(--green); background: rgba(79, 140, 98, 0.16); }
-.todo-doneby-tag.k { color: var(--katie); background: rgba(207, 138, 85, 0.18); }
-.todo-doneby-tag.both { color: var(--accent); background: rgba(166, 193, 153, 0.16); }
+/* Single person → their hue (inline --pc); several → a neutral accent tag. */
+.todo-doneby-tag { color: var(--pc, var(--accent)); background: color-mix(in srgb, var(--pc, var(--accent)) 16%, transparent); }
+.todo-doneby-tag.multi { color: var(--accent); background: color-mix(in srgb, var(--accent) 16%, transparent); }
 /* Show each task's notes right under its title; long notes fade out (like
    Quick Notes) so one task can't swallow the list — tapping opens the full text. */
 .todo-note {
@@ -1263,6 +1283,7 @@ button { font-family: inherit; }
 
 /* Calendar */
 .cal-legend { display: flex; align-items: center; gap: 16px; margin: 6px 0 12px; font-size: 0.82rem; color: var(--muted); }
+.legend-people { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; }
 .legend-item { display: inline-flex; align-items: center; gap: 6px; }
 #calToday { margin-left: auto; }
 /* A/K "bubble" — the shared per-person marker used on events & in the legend. */
@@ -1279,8 +1300,7 @@ button { font-family: inherit; }
   line-height: 1;
   flex: none;
 }
-.pbubble.a { background: var(--green); }
-.pbubble.k { background: var(--katie); }
+.pbubble { background: var(--pc, var(--accent)); }
 
 /* The legend, weekday header and day grid share a left indent — this reserves a
    left "gutter lane" the week bubbles hang in, while keeping the day boxes lined
@@ -1418,9 +1438,7 @@ button { font-family: inherit; }
 }
 .cal-event .pbubble { width: 13px; height: 13px; font-size: 0.5rem; }
 .cal-event-title { overflow: hidden; text-overflow: ellipsis; }
-.cal-event.p-a { background: rgba(79, 140, 98, 0.22); }
-.cal-event.p-k { background: rgba(207, 138, 85, 0.22); }
-.cal-event.p-both { background: rgba(166, 193, 153, 0.16); }
+/* The per-person tint is set inline (background + --elc); see eventTint() in app.js. */
 .cal-more { font-size: 0.62rem; color: var(--muted); padding-left: 3px; }
 
 /* To-do items due on a day (the to-do↔calendar sync), tinted by quadrant. */
@@ -1504,10 +1522,9 @@ button { font-family: inherit; }
 .day-add-row { margin-top: 12px; display: flex; }
 .day-add-row .todo-add-btn { padding: 8px 18px; font-size: 0.9rem; }
 .add-event { margin-top: 4px; display: flex; flex-direction: column; gap: 12px; }
-.person-pick { display: flex; align-items: center; gap: 8px; }
+.person-pick { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .person-pick .pbtn { width: 34px; height: 34px; font-size: 0.85rem; }
-.person-pick .pbtn.on.a { background: var(--green); color: #fff; border-color: var(--green); }
-.person-pick .pbtn.on.k { background: var(--katie); color: #fff; border-color: var(--katie); }
+.person-pick .pbtn.on { background: var(--pc); color: var(--pc-ink); border-color: var(--pc); }
 .both-pick {
   padding: 8px 14px;
   border-radius: 999px;
@@ -1936,20 +1953,14 @@ button { font-family: inherit; }
 .hist-table.week .cell { max-width: 40px; }
 .hist-table.month .cell { max-width: 22px; border-radius: 3px; }
 .hist-cell.today .cell { border-color: var(--accent); } /* the "today" green outline stays */
-.hist-cell .cell.a { background: var(--green); }
-.hist-cell .cell.k { background: var(--katie); }
-.hist-cell .cell.both { background: linear-gradient(135deg, var(--green) 0 50%, var(--katie) 50% 100%); }
+/* The cell fill (solid person hue, or a diagonal split between everyone who did
+   it that day) is set inline; see cellFill() in app.js. */
 .cellnum { font-size: 0.74rem; font-weight: 700; color: #1a1b16; line-height: 1; }
-/* In a halved cell, each person's tally sits inside their own triangle. */
-.cell.both .cellnum { position: absolute; font-size: 0.6rem; }
-.cell.both .cellnum.a { top: 1px; left: 3px; }
-.cell.both .cellnum.k { right: 3px; bottom: 1px; }
 .hist-table.month .cellnum { display: none; }
 .hist-table.readonly .hist-cell { cursor: default; }
-/* Filled squares used beside chore names on the checklist (green = Andrew, rose = Katie). */
-.pip { width: 6px; height: 6px; border-radius: 2px; background: var(--accent); }
-.pip.a { background: var(--green); }
-.pip.k { background: var(--katie); }
+/* Filled squares beside chore names on the checklist — one per completion, each
+   tinted in its owner's colour via an inline --pc. */
+.pip { width: 6px; height: 6px; border-radius: 2px; background: var(--pc, var(--accent)); }
 .pipn { font-size: 0.6rem; line-height: 1; color: var(--muted); margin-left: 1px; }
 .add-chore { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 18px; }
 .add-chore input {
@@ -1999,13 +2010,15 @@ button { font-family: inherit; }
 .chore-name-field button:hover { background: var(--green-dark); }
 .chore-name-field button:active { transform: scale(0.97); }
 .chore-item {
+  --r: 10px; /* corner radius, shared with the assignee stripe */
+  position: relative;
   display: flex;
   align-items: center;
   gap: 10px;
   padding: 8px 12px;
   background: var(--card);
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: var(--r);
   margin-bottom: 6px;
   box-shadow: var(--shadow);
   transition: opacity 0.2s ease;
@@ -2030,10 +2043,10 @@ button { font-family: inherit; }
   user-select: none;
   touch-action: manipulation;
 }
-/* The A/K buttons are just the log control — the coloured boxes carry the "done"
-   state — so the letter is tinted per person but the button no longer fills. */
-.pbtn.a { color: var(--green); }
-.pbtn.k { color: var(--katie); }
+/* The person buttons are just the log control — the coloured boxes carry the
+   "done" state — so the letter is tinted in that person's colour (inline --pc)
+   but the button no longer fills. */
+.pbtn { color: var(--pc, var(--muted)); }
 .pbtn:hover { border-color: currentColor; }
 .pbtn:active { transform: scale(0.92); }
 .chore-name { flex: 0 1 auto; min-width: 0; cursor: default; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -2079,29 +2092,15 @@ button { font-family: inherit; }
 .chore-del:hover { color: var(--danger); opacity: 0.75; }
 
 /* ---- Assign mode: a temporary checklist state (toggled like Edit). Each chore's
-   existing A/K buttons fill with the person's colour to set whose job it is, and a
-   thin coloured stripe on the row shows the assignee at a glance in every mode. --- */
-.pbtn.assign-on.a { background: var(--green); border-color: var(--green); color: var(--on-green); }
-.pbtn.assign-on.k { background: var(--katie); border-color: var(--katie); color: var(--on-katie); }
-.chore-item[data-assignee="0"] { box-shadow: inset 3px 0 0 0 var(--green), var(--shadow); }
-.chore-item[data-assignee="1"] { box-shadow: inset 3px 0 0 0 var(--katie), var(--shadow); }
-/* Assigned to both: green wraps the top-left corner, rose the bottom-left. Each
-   half is an inset box-shadow so the stripe hugs the card's rounded corners
-   exactly like a single assignment does (a plain rectangle would square them). */
-.chore-item[data-assignee="both"] { position: relative; }
-.chore-item[data-assignee="both"]::before,
-.chore-item[data-assignee="both"]::after {
-  content: ""; position: absolute; left: 0; right: 0; height: 50%;
-  pointer-events: none; border-radius: inherit;
-}
-.chore-item[data-assignee="both"]::before {
-  top: 0; border-bottom-left-radius: 0; border-bottom-right-radius: 0;
-  box-shadow: inset 3px 0 0 0 var(--green);
-}
-.chore-item[data-assignee="both"]::after {
-  bottom: 0; border-top-left-radius: 0; border-top-right-radius: 0;
-  box-shadow: inset 3px 0 0 0 var(--katie);
-}
+   person buttons fill with that person's colour to set whose job it is, and a thin
+   coloured stripe on the row's left edge shows the assignee(s) at a glance. ---- */
+.pbtn.assign-on { background: var(--pc); border-color: var(--pc); color: var(--pc-ink); }
+/* "Whose job" stripe: one colour band per assignee, stacked top→bottom. Each band
+   is an inset box-shadow so it hugs the card's rounded corners (the wrapped look a
+   single assignment has); the first/last bands round the top/bottom-left corners.
+   Built by assigneeStripe() in app.js. */
+.astripe { position: absolute; inset: 0; border-radius: var(--r); pointer-events: none; }
+.astripe-seg { position: absolute; left: 0; right: 0; box-shadow: inset 3px 0 0 0 var(--pc); }
 /* While assigning, dim the completion pips/streaks so the buttons read as the
    action rather than as today's tally — and stop the pips taking taps meant for
    assignment. */
@@ -2114,8 +2113,7 @@ button { font-family: inherit; }
   background: var(--card); border-radius: 14px; padding: 12px 14px;
   box-shadow: var(--shadow); border-left: 4px solid transparent;
 }
-.assigned-card.a { border-left-color: var(--green); }
-.assigned-card.k { border-left-color: var(--katie); }
+.assigned-card { border-left-color: var(--pc, transparent); }
 .assigned-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
 .assigned-head .pbubble { flex: none; }
 .assigned-name { font-weight: 600; }
@@ -2134,8 +2132,7 @@ button { font-family: inherit; }
   display: inline-flex; align-items: center; justify-content: center;
   touch-action: manipulation; -webkit-user-select: none; user-select: none;
 }
-.assigned-check.a.on { background: var(--green); border-color: var(--green); color: var(--on-green); }
-.assigned-check.k.on { background: var(--katie); border-color: var(--katie); color: var(--on-katie); }
+.assigned-check.on { background: var(--pc); border-color: var(--pc); color: var(--pc-ink); }
 .assigned-item-name { display: flex; flex-direction: column; gap: 1px; }
 .assigned-item.done .assigned-item-name { color: var(--muted); text-decoration: line-through; }
 .assigned-item-cat { font-size: 11px; color: var(--muted); text-decoration: none; }
@@ -2384,9 +2381,7 @@ button { font-family: inherit; }
   }
   .cal-event-title { display: block; flex: 1; min-width: 0; }
   .cal-event .pbubble { display: none; }
-  .cal-event.p-a { border-left-color: var(--green); }
-  .cal-event.p-k { border-left-color: var(--katie); }
-  .cal-event.p-both { border-left-color: var(--accent); }
+  .cal-event { border-left-color: var(--elc, transparent); } /* --elc set inline per event */
   .cal-task .q-dot { width: 5px; height: 5px; }
   .cal-task.q1 { border-left-color: var(--q1); }
   .cal-task.q2 { border-left-color: var(--q2); }

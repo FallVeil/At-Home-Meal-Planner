@@ -65,9 +65,12 @@
   var SAGE_BASE = { bg: "#1a1b16", card: "#2e2f28", ink: "#eaece7", accent: "#a6c199" };
 
   /* Each person's colour is a HOUSEHOLD setting (synced across devices), not a
-     per-device theme choice — so both phones show the same person colours. It is
-     stored in app settings and painted via applyPersonColors(). */
+     per-device theme choice — so every phone shows the same person colours. It is
+     stored in app settings and painted via applyPersonColors(). The household can
+     have 2–6 people; these are the default hues, chosen to stay distinct on the
+     dark themes. Person 0's hue also doubles as the app's semantic --green. */
   var PERSON_DEFAULTS = { green: "#4f8c62", katie: "#cf8a55" };
+  var PERSON_COLORS = ["#4f8c62", "#cf8a55", "#5b8fb0", "#b07cc6", "#cc6b7a", "#5fae9c"];
 
   /* Pre-built themes. Sage is first and is the default; selecting it simply
      clears the inline overrides so the hand-tuned :root values apply. */
@@ -124,13 +127,23 @@
 
   function apply(state) { applyVars(varsFor(state || load())); }
 
-  /* Paint the two person hues (a household setting) onto the person variables,
-     deriving the darker/readable-text helpers. Falls back to the sage defaults
-     for anything that isn't a valid #rrggbb. */
-  function applyPersonColors(green, katie) {
+  /* Paint the household's person hues (a synced setting) onto CSS variables,
+     deriving the darker/readable-text helpers. Accepts an array of up to six
+     #rrggbb colours; anything invalid falls back to that slot's default. Person 0
+     also drives --green (the app's semantic "done" colour) and person 1 --katie,
+     kept for backwards compatibility with older rules. Most per-person UI now
+     reads an inline --pc/--pc-ink pair instead, so it scales past two people. */
+  function applyPersonColors(colors) {
     var root = document.documentElement;
-    var g = /^#[0-9a-fA-F]{6}$/.test(green || "") ? green : PERSON_DEFAULTS.green;
-    var k = /^#[0-9a-fA-F]{6}$/.test(katie || "") ? katie : PERSON_DEFAULTS.katie;
+    var list = Array.isArray(colors) ? colors : Array.prototype.slice.call(arguments);
+    for (var i = 0; i < 6; i++) {
+      var raw = list[i];
+      var c = /^#[0-9a-fA-F]{6}$/.test(raw || "") ? raw : (PERSON_COLORS[i] || PERSON_COLORS[0]);
+      root.style.setProperty("--p" + i, c);
+      root.style.setProperty("--on-p" + i, readableInk(c));
+    }
+    var g = /^#[0-9a-fA-F]{6}$/.test(list[0] || "") ? list[0] : PERSON_DEFAULTS.green;
+    var k = /^#[0-9a-fA-F]{6}$/.test(list[1] || "") ? list[1] : PERSON_DEFAULTS.katie;
     root.style.setProperty("--green", g);
     root.style.setProperty("--green-dark", darken(g, 0.1));
     root.style.setProperty("--katie", k);
@@ -149,10 +162,12 @@
     PRESETS: PRESETS,
     SAGE_BASE: SAGE_BASE,
     PERSON_DEFAULTS: PERSON_DEFAULTS,
+    PERSON_COLORS: PERSON_COLORS,
     load: load,
     save: save,
     apply: apply,
     applyPersonColors: applyPersonColors,
+    readableInk: readableInk,
     baseFor: baseFor,
     deriveVars: deriveVars,
     swatchFor: function (state) {

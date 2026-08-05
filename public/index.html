@@ -168,8 +168,7 @@
           <button id="calNext" class="nav-arrow" aria-label="Next month">▶</button>
         </div>
         <div class="cal-legend">
-          <span class="legend-item"><span class="pbubble a" data-person-bubble="0">A</span> <span data-person-name="0">Andrew</span></span>
-          <span class="legend-item"><span class="pbubble k" data-person-bubble="1">K</span> <span data-person-name="1">Katie</span></span>
+          <span id="calLegendPeople" class="legend-people"></span>
           <button id="calToday" class="linkish" type="button">Today</button>
         </div>
         <div id="calWeekdays" class="cal-weekdays">
@@ -305,20 +304,10 @@
         </div>
         <form id="namesEditor" class="names-editor">
           <h3 class="settings-subhead">Household Members</h3>
-          <p class="names-editor-hint">Who's in your household? These names and colours show on chores and the calendar, and sync across your devices.</p>
-          <label class="names-editor-field">Person 1
-            <div class="name-color-row">
-              <input id="nameInput0" type="text" maxlength="20" autocomplete="off" spellcheck="false" />
-              <input id="colorInput0" type="color" class="person-color" aria-label="Person 1 colour" title="Person 1 colour" />
-            </div>
-          </label>
-          <label class="names-editor-field">Person 2
-            <div class="name-color-row">
-              <input id="nameInput1" type="text" maxlength="20" autocomplete="off" spellcheck="false" />
-              <input id="colorInput1" type="color" class="person-color" aria-label="Person 2 colour" title="Person 2 colour" />
-            </div>
-          </label>
+          <p class="names-editor-hint">Who's in your household? These names and colours show on chores and the calendar, and sync across your devices. Add up to six people.</p>
+          <div id="peopleList" class="people-list"></div>
           <div class="names-editor-actions">
+            <button type="button" id="addPersonBtn" class="ghost">+ Add person</button>
             <button type="submit" id="namesSave" class="primary">Save</button>
           </div>
         </form>
@@ -407,11 +396,7 @@
           <button type="button" id="dayAddBtn" class="todo-add-btn">+ Add event</button>
         </div>
         <form id="addEventForm" class="add-event hidden">
-          <div class="person-pick" id="eventPerson">
-            <button type="button" class="pbtn a on" data-p="0" aria-label="Andrew">A</button>
-            <button type="button" class="pbtn k" data-p="1" aria-label="Katie">K</button>
-            <button type="button" class="both-pick" data-p="both">Both</button>
-          </div>
+          <div class="person-pick" id="eventPerson" role="group" aria-label="Who's this event for?"></div>
           <div class="event-fields">
             <button type="button" id="eventEmojiBtn" class="emoji-box empty"
                     aria-label="Choose event emoji" aria-haspopup="true" aria-expanded="false">🙂</button>

@@ -8,6 +8,14 @@
 // ============================================================
 const CHANGELOG = [
   {
+    build: 3,
+    date: "August 4, 2026",
+    changes: [
+      "Your household can now have up to six people. Add or remove them under Settings → Household Members, each with their own name and colour.",
+      "Chores, the calendar, the assigned board and to-dos all show everyone’s colours — assign a chore or tag an event to as many people as you like.",
+    ],
+  },
+  {
     build: 2,
     date: "August 4, 2026",
     changes: [
@@ -134,11 +142,15 @@ function setFavNote(id, text) {
 }
 
 // ---- Household settings (people's names) — synced like the other data ----
+// The household holds 2–6 people. People 3–6 are added/removed in Settings; the
+// data model is index-based ("0".."5"), so a person is identified by their slot.
 const SETTINGS_KEY = "mealPlanner.settings.v1";
-const DEFAULT_PEOPLE = ["Andrew", "Katie"];
-// Each person's colour is household-synced (both phones match), unlike the
-// per-device colour theme. Defaults mirror --green / --katie in style.css.
-const DEFAULT_COLORS = ["#4f8c62", "#cf8a55"];
+const PEOPLE_MIN = 2;
+const PEOPLE_MAX = 6;
+const DEFAULT_PEOPLE = ["Andrew", "Katie", "Person 3", "Person 4", "Person 5", "Person 6"];
+// Each person's colour is household-synced (every phone matches), unlike the
+// per-device colour theme. Defaults mirror Theme.PERSON_COLORS in theme.js.
+const DEFAULT_COLORS = ["#4f8c62", "#cf8a55", "#5b8fb0", "#b07cc6", "#cc6b7a", "#5fae9c"];
 let settings = loadSettings();
 let settingsPushTimer = null;
 function loadSettings() {
@@ -148,25 +160,42 @@ function loadSettings() {
   } catch {
     /* ignore */
   }
-  return { people: [...DEFAULT_PEOPLE], colors: [...DEFAULT_COLORS] };
+  return { people: DEFAULT_PEOPLE.slice(0, PEOPLE_MIN), colors: DEFAULT_COLORS.slice(0, PEOPLE_MIN) };
 }
-// Always end up with exactly two non-empty names + two valid #rrggbb colours
-// (data model is index-based).
+// Coerce to 2–6 non-empty names + matching valid #rrggbb colours. The number of
+// people is however many names are stored, clamped to [PEOPLE_MIN, PEOPLE_MAX].
 function normalizeSettings(s) {
   const p = Array.isArray(s.people) ? s.people : [];
-  const people = [0, 1].map((i) => {
-    const name = typeof p[i] === "string" ? p[i].trim() : "";
-    return name || DEFAULT_PEOPLE[i];
-  });
   const c = Array.isArray(s.colors) ? s.colors : [];
-  const colors = [0, 1].map((i) => {
+  const n = Math.max(PEOPLE_MIN, Math.min(PEOPLE_MAX, p.length || PEOPLE_MIN));
+  const people = [];
+  const colors = [];
+  for (let i = 0; i < n; i++) {
+    const name = typeof p[i] === "string" ? p[i].trim() : "";
+    people.push(name || DEFAULT_PEOPLE[i] || `Person ${i + 1}`);
     const v = typeof c[i] === "string" ? c[i].trim().toLowerCase() : "";
-    return /^#[0-9a-f]{6}$/.test(v) ? v : DEFAULT_COLORS[i];
-  });
+    colors.push(/^#[0-9a-f]{6}$/.test(v) ? v : DEFAULT_COLORS[i] || DEFAULT_COLORS[0]);
+  }
   return { people, colors };
 }
+// How many people the household currently has, and their indices [0..count-1].
+function peopleCount() {
+  return (settings.people && settings.people.length) || PEOPLE_MIN;
+}
+function activePeople() {
+  return Array.from({ length: peopleCount() }, (_, i) => i);
+}
 function personColor(i) {
-  return (settings.colors && settings.colors[i]) || DEFAULT_COLORS[i];
+  return (settings.colors && settings.colors[i]) || DEFAULT_COLORS[i] || DEFAULT_COLORS[0];
+}
+// Readable ink to sit on a person's filled colour (delegates to the theme maths).
+function personInk(i) {
+  return (window.Theme && window.Theme.readableInk(personColor(i))) || "#20221c";
+}
+// Inline custom properties every per-person element carries, so the person UI
+// scales past two people without a class per slot.
+function personStyle(i) {
+  return `--pc:${personColor(i)};--pc-ink:${personInk(i)}`;
 }
 function saveSettings() {
   localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
@@ -183,7 +212,7 @@ function scheduleSettingsPush() {
     }).catch(() => {});
   }, 700);
 }
-// The two people are stored by index ("0"/"1"); names are just display labels.
+// People are stored by index ("0".."5"); names are just display labels.
 function personName(i) {
   return (settings.people && settings.people[i]) || DEFAULT_PEOPLE[i] || `Person ${i + 1}`;
 }
@@ -191,31 +220,31 @@ function personInitial(i) {
   const n = personName(i).trim();
   return (n[0] || "?").toUpperCase();
 }
-// Push the current names into the static bits of the DOM (legend, event picker).
-// Dynamically rendered spots (chore rows, calendar events) read the names directly.
+// Rebuild the dynamic person surfaces (calendar legend, event picker, Settings
+// editor) and repaint the synced hues. Fires on every data refresh / edit.
 function applyPeopleLabels() {
-  [0, 1].forEach((i) => {
-    document.querySelectorAll(`#eventPerson [data-p="${i}"]`).forEach((b) => {
-      b.textContent = personInitial(i);
-      b.setAttribute("aria-label", personName(i));
-    });
-    document.querySelectorAll(`[data-person-bubble="${i}"]`).forEach((el) => {
-      el.textContent = personInitial(i);
-    });
-    document.querySelectorAll(`[data-person-name="${i}"]`).forEach((el) => {
-      el.textContent = personName(i);
-    });
-    const input = document.getElementById("nameInput" + i);
-    if (input && document.activeElement !== input) input.value = personName(i);
-    const color = document.getElementById("colorInput" + i);
-    if (color && document.activeElement !== color) color.value = personColor(i);
-  });
-  applyPersonColors(); // keep the synced person hues painted (fires on every refresh)
+  renderPersonLegend();
+  renderEventPersonPicker();
+  renderPeopleEditor();
+  applyPersonColors(); // keep the synced person hues painted
 }
-// Paint the household's two person colours onto the CSS person variables.
+// The calendar's colour key — one chip per household member.
+function renderPersonLegend() {
+  const wrap = document.getElementById("calLegendPeople");
+  if (!wrap) return;
+  wrap.innerHTML = activePeople()
+    .map(
+      (i) =>
+        `<span class="legend-item"><span class="pbubble" style="${personStyle(i)}">${escapeHtml(
+          personInitial(i)
+        )}</span> ${escapeHtml(personName(i))}</span>`
+    )
+    .join("");
+}
+// Paint the household's person colours onto the CSS person variables.
 function applyPersonColors() {
   if (window.Theme && window.Theme.applyPersonColors) {
-    window.Theme.applyPersonColors(personColor(0), personColor(1));
+    window.Theme.applyPersonColors(settings.colors || []);
   }
 }
 
@@ -2038,29 +2067,29 @@ function noteGlyph() {
 // single "0"/"1" or the legacy "both" — this reads all three shapes uniformly.
 function doneBySet(t) {
   const v = t.doneBy;
-  if (Array.isArray(v)) return v.filter((p) => p === "0" || p === "1");
+  if (Array.isArray(v)) return v.filter((p) => /^[0-5]$/.test(p));
   if (v === "both") return ["0", "1"];
-  if (v === "0" || v === "1") return [v];
+  if (/^[0-5]$/.test(v || "")) return [v];
   return [];
 }
-// Completion control: two independent A/K toggles so you record WHO finished the
-// task. Each button flips that person on/off on its own, so a task can be done by
-// A, by K, or by both at once. `doneBy` holds the selected people; `done` stays
-// the simple boolean the rest of the app reads (true whenever anyone is selected).
+// Completion control: one independent toggle per household member so you record
+// WHO finished the task. Each button flips that person on/off on its own, so a
+// task can be done by anyone or several people at once. `doneBy` holds the
+// selected people; `done` stays the simple boolean the rest of the app reads
+// (true whenever anyone is selected).
 function todoDoneControl(t) {
   const wrap = document.createElement("div");
   wrap.className = "todo-doneby-pick";
   const set = doneBySet(t);
-  const opts = [
-    ["0", "a", personInitial(0), personName(0)],
-    ["1", "k", personInitial(1), personName(1)],
-  ];
-  opts.forEach(([p, cls, label, name]) => {
+  activePeople().forEach((pi) => {
+    const p = String(pi);
+    const name = personName(pi);
     const b = document.createElement("button");
     b.type = "button";
     const active = set.includes(p);
-    b.className = `todo-doneby ${cls}` + (active ? " on" : "");
-    b.textContent = label;
+    b.className = "todo-doneby" + (active ? " on" : "");
+    b.setAttribute("style", personStyle(pi));
+    b.textContent = personInitial(pi);
     b.title = active ? `Done by ${name} — tap to remove` : `Mark done by ${name}`;
     b.setAttribute("aria-label", b.title);
     b.addEventListener("click", (e) => {
@@ -2084,11 +2113,19 @@ function todoDoneControl(t) {
 function todoDoneTag(t) {
   const set = doneBySet(t);
   if (!t.done || !set.length) return null;
-  const both = set.length === 2;
   const tag = document.createElement("span");
-  const cls = both ? "both" : set[0] === "1" ? "k" : "a";
-  tag.className = `todo-doneby-tag ${cls}`;
-  tag.textContent = both ? "✓ Both" : `✓ ${personName(Number(set[0]))}`;
+  tag.className = "todo-doneby-tag";
+  if (set.length === 1) {
+    tag.setAttribute("style", personStyle(Number(set[0])));
+    tag.textContent = `✓ ${personName(Number(set[0]))}`;
+  } else {
+    // Several people: a neutral (accent) tag rather than any one person's colour.
+    tag.classList.add("multi");
+    tag.textContent =
+      set.length === 2
+        ? `✓ ${personName(Number(set[0]))} & ${personName(Number(set[1]))}`
+        : `✓ ${set.length} people`;
+  }
   return tag;
 }
 
@@ -2293,7 +2330,8 @@ document.addEventListener("keydown", (e) => {
 // ============================================================
 //  Calendar (month grid; events tagged to Andrew / Katie / Both)
 // ============================================================
-// event = { id, date: "YYYY-MM-DD", title, person: "0" | "1" | "both", time?: "HH:MM" }
+// event = { id, date: "YYYY-MM-DD", title, people: ["0".."5"], time?: "HH:MM" }
+// (older events carry a single `person` of "0" | "1" | "both"; see evPeople()).
 const EVENTS_KEY = "mealPlanner.events.v1";
 let events = loadEvents();
 let eventsPushTimer = null;
@@ -2301,7 +2339,7 @@ let calMonth = startOfMonth(new Date()); // first of the month currently on scre
 let dayEditorDate = null; // which day the editor is open for
 let dayEditorMode = "list"; // "list" (events + Add button) | "form" (add/edit prompts)
 let editingEventId = null; // event being edited (null = adding new)
-let eventPerson = "0"; // selected person in the add/edit form
+let eventPeople = ["0"]; // selected people in the add/edit form (one or more)
 
 function loadEvents() {
   try {
@@ -2548,15 +2586,28 @@ function repeatSummary(e) {
       return "";
   }
 }
-// Small A/K "bubble(s)" matching the chores visual.
-function personBubbles(person) {
-  const a = `<span class="pbubble a">${escapeHtml(personInitial(0))}</span>`;
-  const k = `<span class="pbubble k">${escapeHtml(personInitial(1))}</span>`;
-  if (person === "both") return a + k;
-  if (person === "1") return k;
-  return a;
+// The people an event belongs to, as an array of indices. Migrates the old model
+// where `person` was "0" / "1" / "both".
+function evPeople(e) {
+  if (Array.isArray(e.people)) {
+    const list = e.people.filter((p) => Number(p) < peopleCount());
+    return list.length ? list : ["0"];
+  }
+  if (e.person === "both") return ["0", "1"];
+  if (/^[0-5]$/.test(e.person || "")) return [e.person];
+  return ["0"];
 }
-const personClass = (p) => (p === "both" ? "p-both" : p === "1" ? "p-k" : "p-a");
+// Small person "bubble(s)" matching the chores visual — one per selected person.
+function personBubbles(people) {
+  return people
+    .map((p) => `<span class="pbubble" style="${personStyle(Number(p))}">${escapeHtml(personInitial(Number(p)))}</span>`)
+    .join("");
+}
+// Inline tint for an event chip: one person → their hue; several → the accent.
+function eventTint(people) {
+  const c = people.length === 1 ? personColor(Number(people[0])) : "var(--accent)";
+  return `background:color-mix(in srgb, ${c} 20%, transparent);--elc:${c}`;
+}
 function fmtTime(t) {
   if (!t) return "";
   const [h, m] = t.split(":").map(Number);
@@ -3010,10 +3061,10 @@ function renderCalendar() {
               `<div class="cal-event payday"><span class="pay-ico">$</span><span class="cal-event-title">${escapeHtml(paydayLabel())}</span></div>`,
             ]
           : []),
-        ...eventsOnDay(key).map(
-          (e) =>
-            `<div class="cal-event ${personClass(e.person)}">${personBubbles(e.person)}<span class="cal-event-title">${e.emoji ? `<span class="ev-emoji">${e.emoji}</span>` : ""}${escapeHtml(e.title)}</span></div>`
-        ),
+        ...eventsOnDay(key).map((e) => {
+          const ps = evPeople(e);
+          return `<div class="cal-event" style="${eventTint(ps)}">${personBubbles(ps)}<span class="cal-event-title">${e.emoji ? `<span class="ev-emoji">${e.emoji}</span>` : ""}${escapeHtml(e.title)}</span></div>`;
+        }),
         ...todosDueOn(key).map(
           (t) =>
             `<div class="cal-task q${t.quadrant}${t.done ? " done" : ""}" data-todo-id="${t.id}"><span class="q-dot q${t.quadrant}"></span><span class="cal-event-title">${escapeHtml(t.title)}</span></div>`
@@ -3199,7 +3250,7 @@ function renderDayEvents() {
     row.className = "event-row" + (e.id === editingEventId ? " editing" : "");
     const rep = repeatSummary(e);
     row.innerHTML = `
-      <span class="event-bubbles">${personBubbles(e.person)}</span>
+      <span class="event-bubbles">${personBubbles(evPeople(e))}</span>
       ${e.time ? `<span class="event-time">${fmtTime(e.time)}</span>` : ""}
       <span class="event-title">${e.emoji ? `<span class="ev-emoji">${e.emoji}</span>` : ""}${escapeHtml(e.title)}${rep ? `<span class="event-repeat">↻ ${escapeHtml(rep)}</span>` : ""}</span>
       <button class="event-del" aria-label="Delete event">✕</button>`;
@@ -3235,7 +3286,7 @@ function renderDayEvents() {
 }
 function startEditEvent(e) {
   editingEventId = e.id;
-  setEventPerson(e.person);
+  setEventPeople(evPeople(e));
   $("#addEventTitle").value = e.title;
   setEventTime(e.time || "");
   initRepeatForForm(e.date, e); // presets read from the event's start date
@@ -3247,21 +3298,47 @@ function startEditEvent(e) {
 }
 function resetEventForm() {
   editingEventId = null;
-  setEventPerson("0");
+  setEventPeople(["0"]);
   $("#addEventTitle").value = "";
   setEventTime("");
   initRepeatForForm(dayEditorDate, null);
   setEventEmoji("");
   $("#addEventSubmit").textContent = "Add";
 }
-function setEventPerson(p) {
-  eventPerson = p;
-  document
-    .querySelectorAll("#eventPerson [data-p]")
-    .forEach((b) => b.classList.toggle("on", b.dataset.p === p));
+// Build the event editor's person picker — one toggle chip per household member.
+// (Rebuilt whenever the household changes.) The chips multi-select.
+function renderEventPersonPicker() {
+  const wrap = document.getElementById("eventPerson");
+  if (!wrap) return;
+  wrap.innerHTML = activePeople()
+    .map(
+      (i) =>
+        `<button type="button" class="pbtn" style="${personStyle(i)}" data-p="${i}" aria-pressed="false" aria-label="${escapeHtml(
+          personName(i)
+        )}" title="${escapeHtml(personName(i))}">${escapeHtml(personInitial(i))}</button>`
+    )
+    .join("");
+  syncEventPersonPicker();
 }
-document.querySelectorAll("#eventPerson [data-p]").forEach((b) => {
-  b.addEventListener("click", () => setEventPerson(b.dataset.p));
+function setEventPeople(people) {
+  const list = (Array.isArray(people) ? people : [people]).filter((p) => Number(p) < peopleCount());
+  eventPeople = list.length ? list : ["0"];
+  syncEventPersonPicker();
+}
+function syncEventPersonPicker() {
+  document.querySelectorAll("#eventPerson [data-p]").forEach((b) => {
+    const on = eventPeople.includes(b.dataset.p);
+    b.classList.toggle("on", on);
+    b.setAttribute("aria-pressed", on);
+  });
+}
+// Delegated: tap a chip to add/remove that person; never let the set go empty.
+document.getElementById("eventPerson")?.addEventListener("click", (e) => {
+  const b = e.target.closest("[data-p]");
+  if (!b) return;
+  const p = b.dataset.p;
+  const next = eventPeople.includes(p) ? eventPeople.filter((x) => x !== p) : [...eventPeople, p];
+  if (next.length) setEventPeople(next);
 });
 
 $("#addEventForm").addEventListener("submit", (e) => {
@@ -3275,7 +3352,8 @@ $("#addEventForm").addEventListener("submit", (e) => {
     const ev = events.find((x) => x.id === editingEventId);
     if (ev) {
       ev.title = title;
-      ev.person = eventPerson;
+      ev.people = [...eventPeople];
+      delete ev.person; // drop the legacy single-person field
       ev.time = time;
       ev.recur = recur; // the new recurrence model
       delete ev.repeat; // drop legacy fields so occursOn uses `recur`
@@ -3287,7 +3365,7 @@ $("#addEventForm").addEventListener("submit", (e) => {
       id: Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
       date: dayEditorDate,
       title,
-      person: eventPerson,
+      people: [...eventPeople],
       time,
       recur,
       emoji,
@@ -3448,7 +3526,7 @@ function renderHome() {
           row.className = "dash-row event-row-dash";
           row.innerHTML =
             dayTag +
-            `<span class="event-bubbles">${personBubbles(ev.person)}</span>` +
+            `<span class="event-bubbles">${personBubbles(evPeople(ev))}</span>` +
             (ev.time ? `<span class="dash-time">${fmtTime(ev.time)}</span>` : "") +
             `<span class="dash-row-title">${ev.emoji ? `<span class="ev-emoji">${ev.emoji}</span>` : ""}${escapeHtml(ev.title)}</span>`;
           row.addEventListener("click", () => openDayEditor(key));
@@ -3483,22 +3561,22 @@ function renderHome() {
     grid.appendChild(card);
   }
 
-  // — Chores completed today (green = Andrew, rose = Katie) —
+  // — Chores completed today (a pip per completion, in each person's colour) —
   const doneToday = tracker.items
-    .map((it) => ({ it, a: personCount(it, "0", todayKey), k: personCount(it, "1", todayKey) }))
-    .filter((x) => x.a + x.k > 0);
+    .map((it) => ({ it, counts: activePeople().map((i) => personCount(it, String(i), todayKey)) }))
+    .filter((x) => x.counts.some((n) => n > 0));
   {
     const card = dashCard("Chores", () => activateTab("chores"));
     const body = card.querySelector(".dash-body");
     if (!doneToday.length) body.appendChild(dashEmpty("No chores logged today yet."));
     else
-      doneToday.forEach(({ it, a, k }) => {
+      doneToday.forEach(({ it, counts }) => {
         const row = document.createElement("div");
         row.className = "dash-row chore-row-dash";
-        row.innerHTML = `<span class="dash-row-title">${escapeHtml(it.name)}</span><span class="dash-pips">${pipBoxes(a, k)}</span>`;
+        row.innerHTML = `<span class="dash-row-title">${escapeHtml(it.name)}</span><span class="dash-pips">${pipBoxes(counts)}</span>`;
         body.appendChild(row);
       });
-    const totalDone = doneToday.reduce((n, x) => n + x.a + x.k, 0);
+    const totalDone = doneToday.reduce((n, x) => n + x.counts.reduce((a, b) => a + b, 0), 0);
     if (totalDone) {
       const total = document.createElement("div");
       total.className = "dash-total";
@@ -3556,8 +3634,10 @@ function normalizeTracker(t) {
 function normalizeChores(items) {
   items.forEach((item) => {
     let done = item.done;
-    if (!done || typeof done !== "object" || Array.isArray(done)) done = { "0": {}, "1": {} };
-    ["0", "1"].forEach((p) => {
+    if (!done || typeof done !== "object" || Array.isArray(done)) done = {};
+    // Migrate every stored person slot; keep slots for people who no longer exist
+    // so their history isn't lost, and ensure a bucket for each current person.
+    Object.keys(done).forEach((p) => {
       const v = done[p];
       if (Array.isArray(v)) {
         // old model: a list of dates → one tally each
@@ -3568,17 +3648,18 @@ function normalizeChores(items) {
         done[p] = {};
       }
     });
-    // very old single `dates` array → attribute past checks to Andrew
+    for (let i = 0; i < peopleCount(); i++) if (!done[String(i)]) done[String(i)] = {};
+    // very old single `dates` array → attribute past checks to person 0
     if (Array.isArray(item.dates)) item.dates.forEach((d) => (done["0"][d] = (done["0"][d] || 0) + 1));
     item.done = done;
-    // Who this chore is assigned to on the Assigned board — an array of "0"/"1"
-    // (a chore can belong to both). Migrates the old single `assignee` string.
+    // Who this chore is assigned to on the Assigned board — an array of person
+    // indices (a chore can belong to several). Migrates the old single `assignee`.
     const src = Array.isArray(item.assignees)
       ? item.assignees
-      : item.assignee === "0" || item.assignee === "1"
+      : /^[0-5]$/.test(item.assignee || "")
       ? [item.assignee]
       : [];
-    item.assignees = [...new Set(src.filter((p) => p === "0" || p === "1"))];
+    item.assignees = [...new Set(src.filter((p) => /^[0-5]$/.test(p)))];
     delete item.assignee;
     delete item.dates;
     delete item.person;
@@ -3604,13 +3685,20 @@ function scheduleTrackerPush() {
 function personCount(item, p, key) {
   return (item.done && item.done[p] && item.done[p][key]) || 0;
 }
-function dayCount(item, key) {
-  return personCount(item, "0", key) + personCount(item, "1", key);
+// Every person slot that has any recorded completion (current people + any older
+// slots left behind when the household shrank).
+function personKeys(item) {
+  return item.done ? Object.keys(item.done) : [];
 }
-// Union of the days either person logged this chore (for streaks / done-today).
+function dayCount(item, key) {
+  return personKeys(item).reduce((sum, p) => sum + personCount(item, p, key), 0);
+}
+// Union of the days anyone logged this chore (for streaks / done-today).
 function doneUnion(item) {
   const d = item.done || {};
-  return new Set([...Object.keys(d["0"] || {}), ...Object.keys(d["1"] || {})]);
+  const set = new Set();
+  personKeys(item).forEach((p) => Object.keys(d[p] || {}).forEach((day) => set.add(day)));
+  return set;
 }
 const choreDoneToday = (item) => dayCount(item, isoDate(new Date())) > 0;
 function choreStreak(item) {
@@ -3625,7 +3713,7 @@ function choreStreak(item) {
   return s;
 }
 function incPersonDate(item, p, key) {
-  if (!item.done) item.done = { "0": {}, "1": {} };
+  if (!item.done) item.done = {};
   if (!item.done[p]) item.done[p] = {};
   item.done[p][key] = (item.done[p][key] || 0) + 1;
   saveTracker();
@@ -3679,15 +3767,19 @@ function bindCount(el, onInc, onDec) {
     }
   });
 }
-// Filled squares — one per completion, green for Andrew (a) and rose for Katie (k).
-function pipBoxes(a, k) {
-  const total = a + k;
+// Filled squares — one per completion, tinted in each person's colour. `counts`
+// is an array indexed by person: counts[i] = how many times person i did it.
+function pipBoxes(counts) {
+  const total = counts.reduce((a, b) => a + b, 0);
   if (total <= 0) return "";
   const max = 8;
   let pips = "";
   let shown = 0;
-  for (let i = 0; i < a && shown < max; i++, shown++) pips += '<i class="pip a"></i>';
-  for (let i = 0; i < k && shown < max; i++, shown++) pips += '<i class="pip k"></i>';
+  counts.forEach((n, i) => {
+    for (let j = 0; j < n && shown < max; j++, shown++) {
+      pips += `<i class="pip" style="${personStyle(i)}" data-p="${i}"></i>`;
+    }
+  });
   return total > max ? `${pips}<span class="pipn">${total}</span>` : pips;
 }
 // A bold, unmistakable flame (warm orange with a yellow core) for a kept streak.
@@ -4117,15 +4209,15 @@ function renderAssigned() {
   if (!wrap) return;
   wrap.innerHTML = "";
   const today = isoDate(new Date());
-  [0, 1].forEach((pi) => {
+  activePeople().forEach((pi) => {
     const p = String(pi);
-    const cls = pi === 0 ? "a" : "k";
     const mine = tracker.items.filter((it) => (it.assignees || []).includes(p));
     const card = document.createElement("div");
-    card.className = "assigned-card " + cls;
+    card.className = "assigned-card";
+    card.setAttribute("style", personStyle(pi));
     const head = document.createElement("div");
     head.className = "assigned-head";
-    head.innerHTML = `<span class="pbubble ${cls}">${escapeHtml(personInitial(pi))}</span> <span class="assigned-name">${escapeHtml(personName(pi))}</span> <span class="assigned-count">${mine.length}</span>`;
+    head.innerHTML = `<span class="pbubble" style="${personStyle(pi)}">${escapeHtml(personInitial(pi))}</span> <span class="assigned-name">${escapeHtml(personName(pi))}</span> <span class="assigned-count">${mine.length}</span>`;
     card.appendChild(head);
     if (!mine.length) {
       const empty = document.createElement("div");
@@ -4140,7 +4232,7 @@ function renderAssigned() {
         rowEl.className = "assigned-item" + (done ? " done" : "");
         const trail = [it.category, it.subcategory].filter(Boolean).join(" › ");
         rowEl.innerHTML = `
-          <button type="button" class="assigned-check ${cls}${done ? " on" : ""}" aria-label="Mark ${escapeHtml(it.name)} done">${done ? "✓" : ""}</button>
+          <button type="button" class="assigned-check${done ? " on" : ""}" style="${personStyle(pi)}" aria-label="Mark ${escapeHtml(it.name)} done">${done ? "✓" : ""}</button>
           <span class="assigned-item-name">${escapeHtml(it.name)}${trail ? `<span class="assigned-item-cat">${escapeHtml(trail)}</span>` : ""}</span>
           ${n > 1 ? `<span class="assigned-item-n">${n}×</span>` : ""}`;
         bindCount(
@@ -4200,31 +4292,97 @@ $("#choreAssign").addEventListener("click", () => {
   renderChores();
 });
 
-// ---- People's names + colours editor (Settings tab). Names and the two person
-// colours are one household-synced blob. ----
+// ---- Household members editor (Settings tab). Names + colours are one synced
+// blob; the household holds 2–6 people, added/removed from the tail so existing
+// per-person data (completions, assignments) keeps its slot. ----
+// Render one row per member: colour chip, name, and a remove ✕ on the last row
+// (only when above the minimum). Re-run whenever the household changes.
+function renderPeopleEditor() {
+  const list = document.getElementById("peopleList");
+  if (!list) return;
+  // Don't clobber a field the user is mid-edit (e.g. a sync arriving while typing).
+  const active = document.activeElement;
+  if (active && list.contains(active)) return;
+  const n = peopleCount();
+  list.innerHTML = settings.people
+    .map((name, i) => {
+      const removable = i === n - 1 && n > PEOPLE_MIN;
+      return `<div class="person-row" data-i="${i}">
+          <input type="color" class="person-color" id="colorInput${i}" value="${personColor(i)}" aria-label="${escapeHtml(
+        personName(i)
+      )} colour" title="${escapeHtml(personName(i))} colour" />
+          <input type="text" class="person-name" id="nameInput${i}" maxlength="20" autocomplete="off" spellcheck="false" value="${escapeHtml(
+        name
+      )}" placeholder="Person ${i + 1}" />
+          ${
+            removable
+              ? `<button type="button" class="person-remove" aria-label="Remove ${escapeHtml(personName(i))}">✕</button>`
+              : `<span class="person-remove-spacer" aria-hidden="true"></span>`
+          }
+        </div>`;
+    })
+    .join("");
+  const addBtn = document.getElementById("addPersonBtn");
+  if (addBtn) addBtn.classList.toggle("hidden", n >= PEOPLE_MAX);
+}
+// Gather the editor's current values into a fresh, normalised settings blob.
+function readPeopleEditor() {
+  const people = [];
+  const colors = [];
+  for (let i = 0; i < peopleCount(); i++) {
+    people.push(document.getElementById("nameInput" + i)?.value || "");
+    colors.push(document.getElementById("colorInput" + i)?.value || personColor(i));
+  }
+  return normalizeSettings({ people, colors });
+}
 function saveNamesEditor() {
-  settings = normalizeSettings({
-    people: [$("#nameInput0").value, $("#nameInput1").value],
-    colors: [$("#colorInput0").value, $("#colorInput1").value],
-  });
+  settings = readPeopleEditor();
   saveSettings();
-  applyPeopleLabels(); // refresh the inputs/pickers and repaint the person colours
+  applyPeopleLabels(); // refresh legend/picker/editor and repaint the person colours
   renderActiveChoreView();
   renderCalendarIfActive();
   toast("Household saved");
 }
-$("#namesEditor").addEventListener("submit", (e) => {
+$("#namesEditor")?.addEventListener("submit", (e) => {
   e.preventDefault();
   saveNamesEditor();
 });
-// Live preview while dragging a person's colour wheel; commit + sync on release.
-[0, 1].forEach((i) => {
-  const input = document.getElementById("colorInput" + i);
-  if (!input) return;
-  input.addEventListener("input", () => {
-    if (window.Theme) window.Theme.applyPersonColors($("#colorInput0").value, $("#colorInput1").value);
-  });
-  input.addEventListener("change", () => saveNamesEditor());
+// Add a new member at the tail (seeded with a default name + hue), then let the
+// user rename it. Persists immediately so a half-added person still syncs.
+$("#addPersonBtn")?.addEventListener("click", () => {
+  if (peopleCount() >= PEOPLE_MAX) return;
+  settings = readPeopleEditor();
+  const i = settings.people.length;
+  settings.people.push(DEFAULT_PEOPLE[i] || `Person ${i + 1}`);
+  settings.colors.push(DEFAULT_COLORS[i] || DEFAULT_COLORS[0]);
+  saveSettings();
+  applyPeopleLabels();
+  renderActiveChoreView();
+  renderCalendarIfActive();
+});
+// Remove the last member (delegated, since rows are re-rendered).
+$("#peopleList")?.addEventListener("click", (e) => {
+  if (!e.target.closest(".person-remove")) return;
+  if (peopleCount() <= PEOPLE_MIN) return;
+  settings = readPeopleEditor();
+  settings.people.pop();
+  settings.colors.pop();
+  saveSettings();
+  applyPeopleLabels();
+  renderActiveChoreView();
+  renderCalendarIfActive();
+  toast("Household saved");
+});
+// Live preview while dragging any colour wheel; commit + sync on release. A name
+// change commits on blur.
+$("#peopleList")?.addEventListener("input", (e) => {
+  if (e.target.matches('input[type="color"]') && window.Theme) {
+    const colors = settings.people.map((_, i) => document.getElementById("colorInput" + i)?.value || personColor(i));
+    window.Theme.applyPersonColors(colors);
+  }
+});
+$("#peopleList")?.addEventListener("change", (e) => {
+  if (e.target.matches("input")) saveNamesEditor();
 });
 
 // ---- Per-device: start the calendar week on Monday (Settings tab). Stored
@@ -4355,35 +4513,55 @@ $("#signOutBtn").addEventListener("click", async () => {
   location.reload();
 });
 
+// A left-edge stripe showing who a chore is assigned to. One colour band per
+// assignee, stacked top→bottom, each an inset box-shadow so the stripe hugs the
+// card's rounded corners (the same wrapped look a single assignment has).
+function assigneeStripe(assignees) {
+  const ps = assignees.filter((p) => Number(p) < peopleCount());
+  if (!ps.length) return "";
+  const n = ps.length;
+  const segs = ps
+    .map((p, i) => {
+      const radius =
+        n === 1 ? "var(--r)" : i === 0 ? "var(--r) var(--r) 0 0" : i === n - 1 ? "0 0 var(--r) var(--r)" : "0";
+      return `<span class="astripe-seg" style="top:${(i * 100) / n}%;height:${
+        100 / n
+      }%;border-radius:${radius};--pc:${personColor(Number(p))}"></span>`;
+    })
+    .join("");
+  return `<span class="astripe" aria-hidden="true">${segs}</span>`;
+}
+
 function choreRow(item) {
   const row = document.createElement("div");
   const done = choreDoneToday(item);
   const assigning = $("#choreChecklist").classList.contains("assigning");
   const assignees = Array.isArray(item.assignees) ? item.assignees : [];
   row.className = "chore-item" + (done ? " done" : "") + (assigning ? " assign-mode" : "");
-  // "0", "1", "both", or "" — drives the coloured "whose job" stripe on the left.
-  row.dataset.assignee = assignees.length >= 2 ? "both" : assignees[0] || "";
   const today = isoDate(new Date());
   const streak = choreStreak(item);
-  const aN = personCount(item, "0", today);
-  const kN = personCount(item, "1", today);
-  // `cls` (a/k) drives the person's color; `letter` is just the displayed initial.
-  // In Assign mode the same buttons pick who the chore belongs to (filled = theirs).
-  const pbtn = (p, cls, letter, name, n) => {
+  const counts = activePeople().map((i) => personCount(item, String(i), today));
+  // One button per household member. `pi` drives the person's colour (inline --pc);
+  // the letter is just the displayed initial. In Assign mode the same buttons pick
+  // who the chore belongs to (filled = theirs) instead of logging a completion.
+  const pbtn = (pi) => {
+    const p = String(pi);
+    const letter = personInitial(pi);
+    const name = personName(pi);
+    const n = counts[pi];
     if (assigning) {
       const on = assignees.includes(p);
       const t = on ? `Assigned to ${name} — tap to unassign` : `Assign to ${name}`;
-      return `<button type="button" class="pbtn ${cls}${on ? " assign-on" : ""}" data-p="${p}" aria-pressed="${on}" aria-label="${escapeHtml(t)}" title="${escapeHtml(t)}">${escapeHtml(letter)}</button>`;
+      return `<button type="button" class="pbtn${on ? " assign-on" : ""}" style="${personStyle(pi)}" data-p="${p}" aria-pressed="${on}" aria-label="${escapeHtml(t)}" title="${escapeHtml(t)}">${escapeHtml(letter)}</button>`;
     }
-    return `<button type="button" class="pbtn ${cls}${n > 0 ? " on" : ""}" data-p="${p}" aria-label="${escapeHtml(name)} did this${n > 1 ? " (" + n + "×)" : ""}" title="${escapeHtml(name)} — tap to add, hold to remove">${escapeHtml(letter)}</button>`;
+    return `<button type="button" class="pbtn${n > 0 ? " on" : ""}" style="${personStyle(pi)}" data-p="${p}" aria-label="${escapeHtml(name)} did this${n > 1 ? " (" + n + "×)" : ""}" title="${escapeHtml(name)} — tap to add, hold to remove">${escapeHtml(letter)}</button>`;
   };
   row.innerHTML = `
     <div class="chore-people">
-      ${pbtn("0", "a", personInitial(0), personName(0), aN)}
-      ${pbtn("1", "k", personInitial(1), personName(1), kN)}
+      ${activePeople().map((i) => pbtn(i)).join("")}
     </div>
     <span class="chore-name">${escapeHtml(item.name)}</span>
-    <span class="chore-marks">${pipBoxes(aN, kN)}</span>
+    <span class="chore-marks">${pipBoxes(counts)}</span>
     <span class="chore-tags">
       ${streak >= 3
         ? `<span class="streak-pill ${done ? "hot" : "cold"}" title="${
@@ -4394,6 +4572,9 @@ function choreRow(item) {
         : ""}
     </span>
     <button class="chore-del" aria-label="Delete">✕</button>`;
+  // The "whose job" stripe wraps the left edge (absolutely positioned, so it sits
+  // behind the row content without affecting the flex layout).
+  row.insertAdjacentHTML("beforeend", assigneeStripe(assignees));
   row.querySelectorAll(".pbtn").forEach((btn) => {
     const p = btn.dataset.p;
     if (assigning) {
@@ -4413,11 +4594,12 @@ function choreRow(item) {
       );
     }
   });
-  // Click a filled box to remove that completion (green = Andrew, rose = Katie).
+  // Click a filled box to remove that person's completion (each pip carries its
+  // owner's index).
   row.querySelectorAll(".chore-marks .pip").forEach((pip) => {
     pip.title = "Remove one completion";
     pip.addEventListener("click", () => {
-      decPersonDate(item, pip.classList.contains("a") ? "0" : "1", today);
+      decPersonDate(item, pip.dataset.p, today);
       renderChores();
     });
   });
@@ -4467,20 +4649,25 @@ function historyDays() {
 
 const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
-// Fill style for a cell: solid green (Andrew), solid rose (Katie), or diagonally
-// halved when both did it. `showCount` adds each person's own tally (in their half)
-// when they did it more than once.
-function cellMarkup(aC, kC, showCount) {
-  let cls = "";
-  if (aC > 0 && kC > 0) cls = "both";
-  else if (aC > 0) cls = "a";
-  else if (kC > 0) cls = "k";
-  let num = "";
-  if (showCount) {
-    if (aC > 1) num += `<span class="cellnum a">${aC}</span>`;
-    if (kC > 1) num += `<span class="cellnum k">${kC}</span>`;
+// Fill for a history cell: solid in one person's colour, or a diagonal split
+// between everyone who did the chore that day (equal bands). `showCount` shows a
+// centred tally when a single person did it more than once (week view only).
+function cellFill(item, key, showCount) {
+  const doers = activePeople()
+    .map((i) => ({ i, n: personCount(item, String(i), key) }))
+    .filter((d) => d.n > 0);
+  if (!doers.length) return { style: "", inner: "" };
+  let bg;
+  if (doers.length === 1) {
+    bg = personColor(doers[0].i);
+  } else {
+    const stops = doers
+      .map((d, idx) => `${personColor(d.i)} ${(idx * 100) / doers.length}% ${((idx + 1) * 100) / doers.length}%`)
+      .join(", ");
+    bg = `linear-gradient(135deg, ${stops})`;
   }
-  return { cls, num };
+  const inner = showCount && doers.length === 1 && doers[0].n > 1 ? `<span class="cellnum">${doers[0].n}</span>` : "";
+  return { style: `background:${bg}`, inner };
 }
 
 
@@ -4536,8 +4723,8 @@ function renderHistory() {
       const key = isoDate(d);
       const isToday = key === todayKey;
       const weekStart = isMonth && i % 7 === 0;
-      const { cls, num } = cellMarkup(personCount(it, "0", key), personCount(it, "1", key), showCount);
-      r += `<td class="hist-cell${isToday ? " today" : ""}${weekStart ? " week-start" : ""}"><span class="cell${cls ? " " + cls : ""}">${num}</span></td>`;
+      const { style, inner } = cellFill(it, key, showCount);
+      r += `<td class="hist-cell${isToday ? " today" : ""}${weekStart ? " week-start" : ""}"><span class="cell" style="${style}">${inner}</span></td>`;
     });
     return r + `</tr>`;
   };
