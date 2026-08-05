@@ -58,6 +58,20 @@ const CATEGORY_FILTERS = {
   },
 };
 
+// Common GERD / reflux trigger ingredients, excluded when the "Low-acid" filter
+// is on. This is a heuristic (the recipe API has no acidity filter), so it can't
+// catch every trigger and may hide some otherwise-fine recipes. Plain black
+// pepper is intentionally omitted — excluding it would wipe out most savoury
+// results — while the sharper chilli/hot varieties are kept out.
+const LOW_ACID_EXCLUDE = [
+  "tomato", "citrus", "orange", "lemon", "lime", "grapefruit",
+  "coffee", "espresso", "chocolate", "cocoa",
+  "onion", "garlic", "vinegar",
+  "mint", "peppermint", "spearmint",
+  "wine", "alcohol", "chili", "cayenne", "jalapeno", "hot sauce", "salsa",
+  "ketchup", "mustard", "pineapple", "soda", "cola",
+].join(",");
+
 app.use(express.json());
 
 // ---------------------------------------------------------------------------
@@ -477,6 +491,26 @@ app.put("/api/settings", async (req, res) => {
   }
 });
 
+// Store-mode layout (per-store aisle order + crowdsourced item->aisle map). A
+// small shared blob that syncs across the household like everything else.
+app.get("/api/store", async (req, res) => {
+  if (!storageEnabled) return res.json({ enabled: false });
+  try {
+    res.json({ enabled: true, store: (await redisGetJSON(keyFor(req, "store"))) || null });
+  } catch {
+    res.status(502).json({ error: "Could not read the store layout." });
+  }
+});
+app.put("/api/store", async (req, res) => {
+  if (!storageEnabled) return res.json({ enabled: false });
+  try {
+    await redisSetJSON(keyFor(req, "store"), req.body?.store || {});
+    res.json({ ok: true });
+  } catch {
+    res.status(502).json({ error: "Could not save the store layout." });
+  }
+});
+
 // Search recipes by title/keyword, optionally within a dish-type category.
 //   type=appetizer|soup|salad|main course -> category filter
 //   gf=1     -> filter to gluten-free (default on in the UI, but optional)
@@ -493,8 +527,11 @@ app.get("/api/search", async (req, res) => {
   const under500 = ["1", "true", "yes"].includes(
     (req.query.under500 || "").toString().toLowerCase()
   );
+  const lowAcid = ["1", "true", "yes"].includes(
+    (req.query.lowacid || "").toString().toLowerCase()
+  );
   const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0); // for "load more"
-  const cacheKey = `search:${type}:${query}:${diet}:${glutenFree}:${under500}:${number}:${offset}`;
+  const cacheKey = `search:${type}:${query}:${diet}:${glutenFree}:${under500}:${lowAcid}:${number}:${offset}`;
   const cached = cacheGet(cacheKey);
   if (cached) return res.json(cached);
   try {
@@ -515,6 +552,7 @@ app.get("/api/search", async (req, res) => {
     if (diet) params.diet = diet;
     if (glutenFree) params.intolerances = "gluten"; // Optional celiac filter.
     if (under500) params.maxCalories = 500; // Calories per serving.
+    if (lowAcid) params.excludeIngredients = LOW_ACID_EXCLUDE; // Heuristic GERD filter.
     const data = await spoonFetch("/recipes/complexSearch", params);
     (data.results || []).forEach(addToPool); // remember these for offline fallback
 

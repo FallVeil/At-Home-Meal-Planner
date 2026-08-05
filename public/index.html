@@ -126,6 +126,9 @@
                 </svg>
               </button>
             </form>
+            <div class="search-filters">
+              <button type="button" id="lowAcidToggle" class="filter-bubble" aria-pressed="false" title="Hide recipes with common acid-reflux trigger ingredients">Low-acid</button>
+            </div>
             <div id="targetBanner" class="target-banner"></div>
             <div id="recipeView">
               <div id="staleNote" class="stale-note hidden"></div>
@@ -169,7 +172,7 @@
           <span class="legend-item"><span class="pbubble k" data-person-bubble="1">K</span> <span data-person-name="1">Katie</span></span>
           <button id="calToday" class="linkish" type="button">Today</button>
         </div>
-        <div class="cal-weekdays">
+        <div id="calWeekdays" class="cal-weekdays">
           <span>Sun</span><span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span>
         </div>
         <div id="calGrid" class="cal-grid"></div>
@@ -186,10 +189,12 @@
         <div class="section-head">
           <h2>Grocery list</h2>
           <div class="head-actions">
+            <button id="storeMode" class="ghost" aria-pressed="false" title="Sort by your Walmart's aisle layout">🛒 Store</button>
             <button id="copyList" class="ghost">Copy</button>
             <button id="printList" class="ghost">Print</button>
           </div>
         </div>
+        <p id="storeHint" class="store-hint hidden"></p>
         <div class="grocery-week">
           <label for="grocerySelect">Shopping for</label>
           <select id="grocerySelect"></select>
@@ -272,16 +277,18 @@
         </div>
         <div class="chip-row" id="choreView">
           <button type="button" class="chip active" data-view="list">Checklist</button>
+          <button type="button" class="chip" data-view="assigned">Assigned</button>
           <button type="button" class="chip" data-view="history">History</button>
         </div>
         <div id="choreChecklist">
-          <p class="chore-mode-hint" data-mode="assign">Tap a person's letter on a chore to assign it to them. Tap again to unassign.</p>
+          <p class="chore-mode-hint" data-mode="assign">Tap a person's letter on a chore to assign it to them — a chore can go to both. Tap again to unassign.</p>
           <p class="chore-mode-hint" data-mode="edit">Drag the handle to reorder, or use ✕ to delete. Tap Done when finished.</p>
           <div id="choreList"></div>
           <div id="choreEmpty" class="empty">
             No categories yet. Add one below to start tracking.
           </div>
         </div>
+        <div id="choreAssigned" class="hidden"></div>
         <div id="choreHistory" class="hidden">
           <div class="chip-row" id="historyRange">
             <button type="button" class="chip active" data-range="week">This week</button>
@@ -315,6 +322,15 @@
           </div>
         </form>
 
+        <div class="calendar-prefs">
+          <h3 class="settings-subhead">Calendar</h3>
+          <label class="toggle-row">
+            <input type="checkbox" id="weekStartMonday" />
+            <span>Start the week on Monday</span>
+          </label>
+          <p class="names-editor-hint">Changes how the calendar grid is laid out on this device only.</p>
+        </div>
+
         <div class="theme-editor">
           <h3 class="settings-subhead">Appearance</h3>
           <p class="names-editor-hint">Pick a colour theme, or build your own.</p>
@@ -335,11 +351,34 @@
 
     <div id="toast" class="toast hidden"></div>
 
+    <!-- Store-mode: confirm/enter an item's aisle (crowdsourcing) -->
+    <div id="aislePrompt" class="aisle-prompt hidden">
+      <form id="aislePromptForm" class="aisle-prompt-card">
+        <div class="aisle-prompt-name" id="aislePromptName"></div>
+        <div class="aisle-prompt-msg" id="aislePromptMsg"></div>
+        <input id="aislePromptInput" type="text" autocomplete="off" spellcheck="false" placeholder="e.g. A5, AP7, G12" aria-label="Aisle" />
+        <div class="aisle-prompt-actions">
+          <button type="button" id="aislePromptSkip" class="ghost">Not sure</button>
+          <button type="submit" class="primary">Save</button>
+        </div>
+      </form>
+    </div>
+
     <!-- Recipe detail modal -->
     <div id="modal" class="modal hidden">
       <div class="modal-card">
         <button id="modalClose" class="modal-close">✕</button>
         <div id="modalBody"></div>
+      </div>
+    </div>
+
+    <!-- What's-new / changelog (shown once after a new version ships) -->
+    <div id="whatsNew" class="modal hidden">
+      <div class="modal-card whatsnew-card">
+        <button id="whatsNewClose" class="modal-close">✕</button>
+        <h2>What's new</h2>
+        <div id="whatsNewBody"></div>
+        <button id="whatsNewGotIt" class="primary big">Got it</button>
       </div>
     </div>
 

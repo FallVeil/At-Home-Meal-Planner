@@ -404,6 +404,19 @@ main { max-width: 1000px; margin: 0 auto; padding: 22px 20px 80px; }
   outline: 2px solid var(--accent);
   outline-offset: 1px;
 }
+/* Small opt-in filter bubble(s), indented to the right under the search bar. */
+.search-filters { display: flex; justify-content: flex-end; gap: 8px; margin-top: 6px; padding-right: 2px; }
+.filter-bubble {
+  font-size: 0.8rem; line-height: 1;
+  padding: 6px 12px; border-radius: 999px;
+  border: 1px solid var(--line); background: var(--card); color: var(--muted);
+  cursor: pointer; -webkit-user-select: none; user-select: none;
+}
+.filter-bubble:hover { color: var(--ink); border-color: var(--accent); }
+.filter-bubble.on {
+  background: var(--accent); border-color: var(--accent);
+  color: var(--on-accent, #fff); font-weight: 600;
+}
 
 /* Buttons */
 button { font-family: inherit; }
@@ -2071,11 +2084,88 @@ button { font-family: inherit; }
 .pbtn.assign-on.k { background: var(--katie); border-color: var(--katie); color: var(--on-katie); }
 .chore-item[data-assignee="0"] { box-shadow: inset 3px 0 0 0 var(--green), var(--shadow); }
 .chore-item[data-assignee="1"] { box-shadow: inset 3px 0 0 0 var(--katie), var(--shadow); }
+/* Assigned to both: a split green/rose stripe (box-shadow can't gradient). */
+.chore-item[data-assignee="both"] { position: relative; }
+.chore-item[data-assignee="both"]::before {
+  content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
+  border-top-left-radius: inherit; border-bottom-left-radius: inherit;
+  background: linear-gradient(var(--green) 0 50%, var(--katie) 50% 100%);
+}
 /* While assigning, dim the completion pips/streaks so the buttons read as the
    action rather than as today's tally — and stop the pips taking taps meant for
    assignment. */
 #choreChecklist.assigning .chore-marks,
 #choreChecklist.assigning .chore-tags { opacity: 0.4; pointer-events: none; }
+
+/* ---- Assigned board: one card per person listing their chores. ---- */
+#choreAssigned { display: flex; flex-direction: column; gap: 14px; }
+.assigned-card {
+  background: var(--card); border-radius: 14px; padding: 12px 14px;
+  box-shadow: var(--shadow); border-left: 4px solid transparent;
+}
+.assigned-card.a { border-left-color: var(--green); }
+.assigned-card.k { border-left-color: var(--katie); }
+.assigned-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.assigned-head .pbubble { flex: none; }
+.assigned-name { font-weight: 600; }
+.assigned-count {
+  margin-left: auto; min-width: 22px; text-align: center;
+  font-size: 12px; color: var(--muted);
+  background: var(--bg); border-radius: 999px; padding: 1px 8px;
+}
+.assigned-empty { color: var(--muted); font-size: 14px; padding: 4px 2px; }
+.assigned-item { display: flex; align-items: center; gap: 10px; padding: 6px 0; }
+.assigned-item + .assigned-item { border-top: 1px solid var(--hair, rgba(128,128,128,0.15)); }
+.assigned-check {
+  flex: none; width: 26px; height: 26px; border-radius: 999px;
+  border: 2px solid var(--muted); background: transparent; color: transparent;
+  font-size: 15px; line-height: 1; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
+  touch-action: manipulation; -webkit-user-select: none; user-select: none;
+}
+.assigned-check.a.on { background: var(--green); border-color: var(--green); color: var(--on-green); }
+.assigned-check.k.on { background: var(--katie); border-color: var(--katie); color: var(--on-katie); }
+.assigned-item-name { display: flex; flex-direction: column; gap: 1px; }
+.assigned-item.done .assigned-item-name { color: var(--muted); text-decoration: line-through; }
+.assigned-item-cat { font-size: 11px; color: var(--muted); text-decoration: none; }
+.assigned-item-n { margin-left: auto; font-size: 12px; color: var(--muted); }
+
+/* ---- Settings: a simple checkbox row (e.g. start week on Monday). ---- */
+.calendar-prefs { margin-top: 18px; }
+.toggle-row { display: flex; align-items: center; gap: 10px; cursor: pointer; padding: 4px 0; }
+.toggle-row input { width: 18px; height: 18px; flex: none; accent-color: var(--accent); }
+
+/* ---- Store mode ---- */
+#storeMode.on { background: var(--accent); border-color: var(--accent); color: var(--on-accent, #fff); }
+.store-hint { margin: 4px 2px 0; font-size: 0.82rem; color: var(--muted); }
+.aisle-head .aisle-landmark {
+  display: block; width: 100%; margin-top: 2px;
+  font-size: 0.72rem; font-weight: 400; color: var(--muted);
+}
+/* Category groups (aisle not yet known) read as provisional vs. real aisles. */
+.aisle.cat-group > .aisle-head { color: var(--muted); }
+.aisle.cat-group > .aisle-head .aisle-landmark { font-style: italic; opacity: 0.9; }
+/* Crowdsource aisle prompt (small centered modal) */
+.aisle-prompt {
+  position: fixed; inset: 0; z-index: 60;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(0, 0, 0, 0.45); padding: 20px;
+}
+.aisle-prompt.hidden { display: none; }
+.aisle-prompt-card {
+  background: var(--card); color: var(--ink);
+  width: 100%; max-width: 340px; border-radius: 14px; padding: 18px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4); display: flex; flex-direction: column; gap: 10px;
+}
+.aisle-prompt-name { font-weight: 600; font-size: 1.02rem; }
+.aisle-prompt-msg { color: var(--muted); font-size: 0.9rem; }
+#aislePromptInput {
+  padding: 11px 12px; border: 1px solid var(--line); border-radius: 10px;
+  background: var(--bg); color: var(--ink); font-size: 1.05rem; text-transform: uppercase;
+}
+#aislePromptInput:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.aisle-prompt-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 2px; }
+.aisle-prompt-actions .primary { padding: 10px 18px; }
 
 /* Contextual hint shown above the list while a temporary mode is active. */
 .chore-mode-hint { display: none; color: var(--muted); font-size: 0.82rem; margin: 0 0 12px; }
@@ -2202,6 +2292,19 @@ button { font-family: inherit; }
 .modal-card h3 { font-family: var(--font-display); font-weight: 500; }
 .ing-list { list-style: none; padding: 0; }
 .ing-list li { padding: 6px 0; border-bottom: 1px dashed var(--line); }
+
+/* ---- What's-new / changelog ---- */
+.whatsnew-card { max-width: 440px; }
+.whatsnew-release { padding: 4px 0 14px; border-bottom: 1px dashed var(--line); margin-bottom: 14px; }
+.whatsnew-release:last-child { border-bottom: none; margin-bottom: 0; padding-bottom: 4px; }
+.whatsnew-date { font-size: 0.8rem; color: var(--muted); margin: 0 0 8px; }
+.whatsnew-list { list-style: none; padding: 0; margin: 0; }
+.whatsnew-list li { position: relative; padding: 4px 0 4px 22px; line-height: 1.4; }
+.whatsnew-list li::before {
+  content: "•"; position: absolute; left: 6px; top: 4px;
+  color: var(--green); font-weight: 700;
+}
+#whatsNew .primary.big { width: 100%; margin-top: 18px; }
 
 /* ---- Phone-first tweaks ---- */
 @media (max-width: 640px) {

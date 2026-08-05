@@ -1,4 +1,26 @@
 // ============================================================
+//  Changelog / "What's new"
+//  When you ship a change worth announcing, add a new entry at the
+//  TOP of this list with a build number one higher than the current
+//  highest. The first time each device opens the app after that ships,
+//  it sees every entry newer than the one it last acknowledged. Brand-
+//  new installs are marked caught-up silently (nothing is "new" to them).
+// ============================================================
+const CHANGELOG = [
+  {
+    build: 1,
+    date: "August 4, 2026",
+    changes: [
+      "Store mode: sort your grocery list by your store’s real aisle order, so you can shop straight through without backtracking. Turn it on from the Grocery tab.",
+      "New “Low-acid” filter in recipe search hides common heartburn/reflux triggers.",
+      "Added this “What’s new” note, so you’ll get a quick summary whenever the app updates.",
+    ],
+  },
+];
+const APP_BUILD = CHANGELOG.length ? Math.max(...CHANGELOG.map((e) => e.build)) : 0;
+const SEEN_BUILD_KEY = "homebase.seenBuild.v1";
+
+// ============================================================
 //  State
 // ============================================================
 const PLAN_KEY = "mealPlanner.plan.v2";
@@ -10,6 +32,7 @@ let plan = loadPlan();
 let windowStart = startOfWeek(new Date()); // Monday of the first week shown (defaults to this week)
 let targetWeek = weekKeyOf(new Date()); // week new dishes get added to
 let activeCategory = ""; // dish-type filter for search
+let lowAcidFilter = false; // opt-in "Low-acid" (GERD) recipe filter
 let groceryWeek = null; // which week the Grocery tab is currently showing
 
 function loadPlan() {
@@ -370,6 +393,17 @@ async function initSync() {
         scheduleTodosPush();
       }
     }
+    try {
+      const str = await fetch("/api/store").then((r) => r.json());
+      if (str.enabled && str.store && str.store.stores && Object.keys(str.store.stores).length) {
+        storeData = normalizeStore(str.store);
+        localStorage.setItem(STORE_KEY, JSON.stringify(storeData));
+      } else if (Object.keys(storeData.stores).length) {
+        saveStore(); // push our local store layout up if the server has none
+      }
+    } catch {
+      /* ignore */
+    }
     updatePlanCount();
     updateFavCount();
     updateNotesCount();
@@ -629,6 +663,17 @@ $("#searchForm").addEventListener("submit", (e) => {
   runSearch();
 });
 
+// Opt-in "Low-acid" (GERD) filter bubble under the search bar. Heuristic — it
+// excludes common reflux-trigger ingredients server-side, then re-runs the search.
+$("#lowAcidToggle").addEventListener("click", () => {
+  lowAcidFilter = !lowAcidFilter;
+  const btn = $("#lowAcidToggle");
+  btn.classList.toggle("on", lowAcidFilter);
+  btn.setAttribute("aria-pressed", String(lowAcidFilter));
+  if (favViewActive()) showFavView(false);
+  runSearch();
+});
+
 // Recipe rail: category chips + a "★ Favorites" entry that swaps the rail to the
 // favorites categories.
 document.querySelectorAll("#recipeCats .chip").forEach((chip) => {
@@ -685,6 +730,7 @@ async function runSearch() {
     type: activeCategory,
     gf: true, // gluten-free is always enforced (celiac); control hidden
     under500: false,
+    lowAcid: lowAcidFilter,
   };
   searchOffset = 0;
   searchHasMore = false;
@@ -698,6 +744,7 @@ async function fetchSearchPage(reset) {
   if (p.type) params.set("type", p.type);
   if (p.under500) params.set("under500", "1");
   if (p.gf) params.set("gf", "1");
+  if (p.lowAcid) params.set("lowacid", "1");
 
   const btn = $("#loadMore");
   if (!reset && btn) {
@@ -1225,6 +1272,208 @@ async function loadGroceryWeek(weekKey) {
 }
 $("#grocerySelect").addEventListener("change", (e) => loadGroceryWeek(e.target.value));
 
+// ============================================================
+//  Store mode — sort the grocery list by a real store's aisle layout.
+//  Tier 1 = the item's category (above). Tier 2 = this store: a seeded Walmart
+//  aisle DB (fuzzy-matched by name) + a crowdsourced item->aisle map + a
+//  walk-path order. Per-store data syncs; the on/off toggle is per-device.
+// ============================================================
+const STORE_KEY = "mealPlanner.store.v1";
+const STOREMODE_KEY = "mealPlanner.storeMode";
+let storeData = loadStore();
+let storeMode = localStorage.getItem(STOREMODE_KEY) === "1";
+let storePushTimer = null;
+let seed = null; // { aisleOrder, categoryAisle, items:[{tokens,aisle}], landmarks }
+
+function loadStore() {
+  try {
+    const s = JSON.parse(localStorage.getItem(STORE_KEY));
+    if (s && typeof s === "object") return normalizeStore(s);
+  } catch { /* ignore */ }
+  return { activeId: "", stores: {} };
+}
+function normalizeStore(s) {
+  const stores = {};
+  const src = s && s.stores && typeof s.stores === "object" ? s.stores : {};
+  Object.values(src).forEach((st) => {
+    if (!st || typeof st.id !== "string") return;
+    const itemAisles = {};
+    if (st.itemAisles && typeof st.itemAisles === "object") {
+      Object.entries(st.itemAisles).forEach(([k, v]) => {
+        if (v && typeof v === "object") itemAisles[k] = { aisle: String(v.aisle || ""), confirmed: Boolean(v.confirmed) };
+        else if (typeof v === "string") itemAisles[k] = { aisle: v, confirmed: true };
+      });
+    }
+    stores[st.id] = {
+      id: st.id,
+      name: typeof st.name === "string" ? st.name : "My store",
+      zip: typeof st.zip === "string" ? st.zip : "",
+      order: Array.isArray(st.order) ? st.order.filter((a) => typeof a === "string") : [],
+      itemAisles,
+      seeded: Boolean(st.seeded),
+    };
+  });
+  const activeId = typeof s.activeId === "string" && stores[s.activeId] ? s.activeId : Object.keys(stores)[0] || "";
+  return { activeId, stores };
+}
+function saveStore() {
+  localStorage.setItem(STORE_KEY, JSON.stringify(storeData));
+  if (!syncEnabled) return;
+  clearTimeout(storePushTimer);
+  storePushTimer = setTimeout(() => {
+    fetch("/api/store", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ store: storeData }) }).catch(() => {});
+  }, 700);
+}
+function activeStore() { return storeData.stores[storeData.activeId] || null; }
+const normItem = (name) => (name || "").toLowerCase().replace(/[^a-z0-9 ]/g, " ").replace(/\s+/g, " ").trim();
+
+// Turn a product/ingredient name into matchable keywords (drop filler + brand-ish
+// and packaging words) so recipe ingredients match Walmart product names.
+const SEED_STOP = new Set(
+  "the a an of for with and to in on great value fresh organic each count pack bag box can jar bottle carton tub roll size family natural gluten free non dairy reduced fat low sodium original".split(" ")
+);
+function singular(w) {
+  if (w.length > 4 && w.endsWith("ies")) return w.slice(0, -3) + "y"; // berries -> berry
+  if (w.length > 4 && /(oes|ches|shes|xes|sses|zes)$/.test(w)) return w.slice(0, -2); // tomatoes -> tomato
+  if (w.length > 3 && w.endsWith("s") && !w.endsWith("ss")) return w.slice(0, -1); // beans -> bean, grounds -> ground
+  return w;
+}
+function tokenize(name) {
+  return normItem(name)
+    .split(" ")
+    .filter((w) => w.length > 2 && !SEED_STOP.has(w) && !/^\d+$/.test(w))
+    .map(singular);
+}
+async function loadSeed() {
+  if (seed) return seed;
+  try {
+    const data = await fetch("/wood-river-aisles.json").then((r) => r.json());
+    seed = {
+      name: data.store || "Walmart",
+      aisleOrder: Array.isArray(data.aisleOrder) ? data.aisleOrder : [],
+      categoryAisle: data.categoryAisle || {},
+      landmarks: data.aisleLandmarks || {},
+      items: (data.items_pages_3_to_10 || [])
+        .map(([n, a]) => ({ tokens: tokenize(n), aisle: a }))
+        .filter((x) => x.aisle && x.tokens.length),
+    };
+  } catch {
+    seed = { name: "Walmart", aisleOrder: [], categoryAisle: {}, landmarks: {}, items: [] };
+  }
+  return seed;
+}
+// Fuzzy-match a grocery item name to the seeded product DB; returns an aisle when
+// the word overlap is strong enough, else "".
+function seedAisleFor(name) {
+  if (!seed || !seed.items.length) return "";
+  const toks = tokenize(name);
+  if (!toks.length) return "";
+  const tset = new Set(toks);
+  let best = "", bestScore = 0, bestHit = 0;
+  for (const it of seed.items) {
+    let hit = 0;
+    for (const t of it.tokens) if (tset.has(t)) hit++;
+    if (!hit) continue;
+    // reward covering the grocery item's words without over-rewarding long names
+    const score = hit / toks.length + hit / it.tokens.length * 0.25;
+    if (score > bestScore) { bestScore = score; bestHit = hit; best = it.aisle; }
+  }
+  // Need 2+ shared words: a single shared word (e.g. "milk", "cheese") matches too
+  // many processed products, so those fall through to the correct category map.
+  return bestHit >= 2 && bestScore >= 0.5 ? best : "";
+}
+// Resolve an item's aisle. source: "user" (confirmed/entered), "seed" (auto),
+// "category" (Tier-1 fallback), or "" (unknown).
+function resolveAisle(name, tier1) {
+  const st = activeStore();
+  if (st) {
+    const rec = st.itemAisles[normItem(name)];
+    if (rec && rec.aisle) return { aisle: rec.aisle, source: rec.confirmed ? "user" : "seed" };
+    const sa = seedAisleFor(name);
+    if (sa) return { aisle: sa, source: "seed" };
+  }
+  const ca = seed && seed.categoryAisle[tier1];
+  if (ca) return { aisle: ca, source: "category" };
+  return { aisle: "", source: "" };
+}
+// Position of an aisle code in the walk path: the store's own order wins, then
+// the seeded order, then a zone (prefix) + number fallback.
+function zoneRank(code) {
+  const m = (code || "").toUpperCase().match(/^([A-Z]+)(\d*)/);
+  const prefix = m ? m[1] : (code || "");
+  const num = m && m[2] ? parseInt(m[2], 10) : 0;
+  const Z = { AD: 0, AP: 1, AB: 2, A: 3, AC: 4, F: 10, G: 11, H: 12, I: 13, J: 14, K: 15, L: 16, Y: 20, Z: 30 };
+  let zp = Z[prefix];
+  if (zp === undefined) zp = Z[prefix.slice(0, 2)] ?? Z[prefix.slice(0, 1)] ?? 99;
+  return zp * 1000 + num;
+}
+function aisleRank(code) {
+  if (!code) return 1e9; // unknown aisles sink to the bottom
+  const st = activeStore();
+  if (st && st.order.length) { const i = st.order.indexOf(code); if (i !== -1) return i; }
+  if (seed && seed.aisleOrder.length) { const j = seed.aisleOrder.indexOf(code); if (j !== -1) return 1000 + j; }
+  return 100000 + zoneRank(code);
+}
+// Create the Wood River store (seeded from the map) the first time store mode is
+// switched on, and adopt the walk-path order if the store has none yet.
+async function ensureStoreSeeded() {
+  await loadSeed();
+  let st = activeStore();
+  if (!st) {
+    const id = "wood-river";
+    storeData.stores[id] = { id, name: seed.name, zip: "62095", order: seed.aisleOrder.slice(), itemAisles: {}, seeded: true };
+    storeData.activeId = id;
+    saveStore();
+  } else if (!st.order.length && seed.aisleOrder.length) {
+    st.order = seed.aisleOrder.slice();
+    saveStore();
+  }
+}
+
+// Crowdsourcing: the first time an item is checked off in store mode, confirm the
+// seeded aisle (or ask for an unknown one). After that it's never asked again.
+function maybeAskAisle(name, tier1) {
+  const st = activeStore();
+  if (!st) return;
+  const rec = st.itemAisles[normItem(name)];
+  if (rec && rec.confirmed) return;
+  const { aisle, source } = resolveAisle(name, tier1);
+  // Only confirm an aisle we actually stand behind (seed/user); a bare category
+  // guess asks for the real aisle instead of prefilling a wrong one.
+  const known = source === "seed" || source === "user";
+  openAislePrompt(name, known ? aisle : "");
+}
+let aislePromptKey = null;
+let aislePromptSeed = "";
+function openAislePrompt(name, aisle) {
+  const modal = $("#aislePrompt");
+  if (!modal) return;
+  aislePromptKey = normItem(name);
+  aislePromptSeed = aisle || "";
+  $("#aislePromptName").textContent = capitalize(name);
+  $("#aislePromptMsg").textContent = aisle ? `We have this in Aisle ${aisle}. Is that right?` : "Which aisle is this in?";
+  const input = $("#aislePromptInput");
+  input.value = aisle || "";
+  modal.classList.remove("hidden");
+  requestAnimationFrame(() => { input.focus(); input.select(); });
+}
+// Any response marks the item confirmed so we don't ask again ("ask once").
+// Save uses the (edited) input; "Not sure" keeps the seeded value.
+function finishAislePrompt(save) {
+  const modal = $("#aislePrompt");
+  const st = activeStore();
+  if (st && aislePromptKey) {
+    const val = save
+      ? $("#aislePromptInput").value.trim().toUpperCase().replace(/^AISLE\s+/, "")
+      : aislePromptSeed;
+    st.itemAisles[aislePromptKey] = { aisle: val, confirmed: true };
+    saveStore();
+  }
+  aislePromptKey = null;
+  if (modal) modal.classList.add("hidden");
+  if (groceryWeek) renderGrocery(lastGroceryRecipes, groceryWeek);
+}
+
 function renderGrocery(recipes, weekKey) {
   lastGroceryRecipes = recipes;
   groceryWeek = weekKey;
@@ -1251,17 +1500,33 @@ function renderGrocery(recipes, weekKey) {
   $("#groceryControls").classList.remove("hidden");
 
   // Split into pantry staples (their own collapsible group) and everything else.
-  // A manual recategorization (override) pulls an item out of the staples group.
+  // In store mode an item groups by its store aisle only when we actually know it
+  // (user-confirmed or a confident seed match). When we don't, it groups under its
+  // general category instead — parked next to that category's assumed aisle — so a
+  // guess never masquerades as a real aisle. Confirming an item's aisle (on
+  // check-off) moves it into that aisle's own group.
   const byAisle = {};
   const staplesList = [];
+  function storeGroup(name, tier1) {
+    const { aisle, source } = resolveAisle(name, tier1);
+    if ((source === "user" || source === "seed") && aisle) return { key: aisle, meta: { cat: false } };
+    return { key: "cat:" + tier1, meta: { cat: true, category: tier1 } };
+  }
+  const bucketOf = (name, tier1) => {
+    if (!storeMode) return (byAisle[tier1] ||= { extras: [], items: [] });
+    const g = storeGroup(name, tier1);
+    return (byAisle[g.key] ||= { extras: [], items: [], meta: g.meta });
+  };
+
   for (const item of combined.values()) {
     const overridden = Boolean(wk.overrides[item.key]);
-    if (isStaple(item.name) && !overridden) {
+    // In store mode pantry staples flow into their aisle instead of a side bucket.
+    if (isStaple(item.name) && !overridden && !storeMode) {
       staplesList.push(item);
       continue;
     }
-    const aisle = wk.overrides[item.key] || item.aisle;
-    (byAisle[aisle] ||= { extras: [], items: [] }).items.push(item);
+    const tier1 = wk.overrides[item.key] || item.aisle;
+    bucketOf(item.name, tier1).items.push(item);
   }
   // This week's own manual items, plus still-unbought items carried from earlier weeks.
   const extrasToShow = [
@@ -1269,31 +1534,69 @@ function renderGrocery(recipes, weekKey) {
     ...carriedExtrasFor(weekKey).map(({ extra, origin }) => ({ extra, origin, carried: true })),
   ];
   extrasToShow.forEach((row) => {
-    const aisle = row.extra.aisle || categorizeItem(row.extra.name);
-    (byAisle[aisle] ||= { extras: [], items: [] }).extras.push(row);
+    const tier1 = row.extra.aisle || categorizeItem(row.extra.name);
+    bucketOf(row.extra.name, tier1).extras.push(row);
   });
 
+  // Real aisles sort by the walk order; a category group sits just after the aisle
+  // its category is assumed to be in (or at the very end when that's unknown too).
+  const groupRank = (key) => {
+    const b = byAisle[key];
+    if (b.meta && b.meta.cat) {
+      const ca = seed && seed.categoryAisle[b.meta.category];
+      return (ca ? aisleRank(ca) : 1e8) + 0.5;
+    }
+    return aisleRank(key);
+  };
+  const sortAisles = storeMode
+    ? (a, b) => groupRank(a) - groupRank(b) || a.localeCompare(b)
+    : (a, b) => (a === "Other" ? 1 : b === "Other" ? -1 : a.localeCompare(b));
   Object.keys(byAisle)
-    .sort((a, b) => (a === "Other" ? 1 : b === "Other" ? -1 : a.localeCompare(b)))
-    .forEach((aisle) => {
-      const group = byAisle[aisle];
-      const collapsed = groceryCollapsed.has(aisle);
+    .sort(sortAisles)
+    .forEach((key) => {
+      const group = byAisle[key];
+      const collapsed = groceryCollapsed.has(key);
       const count = group.extras.length + group.items.length;
       const section = document.createElement("div");
       section.className = "aisle" + (collapsed ? " collapsed" : "");
       const header = document.createElement("h3");
       header.className = "aisle-head";
-      header.innerHTML = `<span class="chev">${collapsed ? "▸" : "▾"}</span> ${escapeHtml(aisle)} <span class="aisle-count">${count}</span>`;
+      let label = escapeHtml(key);
+      let landmark = "";
+      if (storeMode) {
+        if (group.meta && group.meta.cat) {
+          section.classList.add("cat-group");
+          label = escapeHtml(group.meta.category || "Other");
+          landmark = `<span class="aisle-landmark">category — check off to set the aisle</span>`;
+        } else {
+          label = "Aisle " + escapeHtml(key);
+          const lm = seed && seed.landmarks[key];
+          if (lm) landmark = `<span class="aisle-landmark">${escapeHtml(lm)}</span>`;
+        }
+      }
+      header.innerHTML = `<span class="chev">${collapsed ? "▸" : "▾"}</span> ${label} <span class="aisle-count">${count}</span>${landmark}`;
       header.addEventListener("click", () => {
-        groceryCollapsed.has(aisle) ? groceryCollapsed.delete(aisle) : groceryCollapsed.add(aisle);
+        groceryCollapsed.has(key) ? groceryCollapsed.delete(key) : groceryCollapsed.add(key);
         renderGrocery(lastGroceryRecipes, weekKey);
       });
       const itemsWrap = document.createElement("div");
       itemsWrap.className = "aisle-items";
-      group.extras.forEach((row) => itemsWrap.appendChild(extraRow(row.extra, row.origin, row.carried)));
-      group.items
-        .sort((a, b) => a.name.localeCompare(b.name))
-        .forEach((item) => itemsWrap.appendChild(groceryRow(item, weekKey)));
+      // Unbought items first (alphabetical); checked-off ones sink to the bottom.
+      const aisleRows = [
+        ...group.extras.map((row) => ({
+          checked: Boolean(row.extra.checked),
+          name: (row.extra.name || "").toLowerCase(),
+          build: () => extraRow(row.extra, row.origin, row.carried),
+        })),
+        ...group.items.map((item) => ({
+          checked: Boolean(wk.checked[item.key]),
+          name: item.name.toLowerCase(),
+          build: () => groceryRow(item, weekKey),
+        })),
+      ];
+      aisleRows
+        .sort((a, b) => a.checked - b.checked || a.name.localeCompare(b.name))
+        .forEach((row) => itemsWrap.appendChild(row.build()));
       section.append(header, itemsWrap);
       groceryList.appendChild(section);
     });
@@ -1308,7 +1611,7 @@ function renderGrocery(recipes, weekKey) {
     const itemsWrap = document.createElement("div");
     itemsWrap.className = "staples-items" + (staplesExpanded ? "" : " hidden");
     staplesList
-      .sort((a, b) => a.name.localeCompare(b.name))
+      .sort((a, b) => Boolean(wk.checked[a.key]) - Boolean(wk.checked[b.key]) || a.name.localeCompare(b.name))
       .forEach((item) => itemsWrap.appendChild(groceryRow(item, weekKey)));
     header.addEventListener("click", () => {
       staplesExpanded = !staplesExpanded;
@@ -1340,11 +1643,15 @@ function groceryRow(item, weekKey) {
     </label>
     <span class="used" title="Used in: ${escapeHtml(usedIn)}">${escapeHtml(usedIn)}</span>`;
   const cb = row.querySelector("input");
+  const tier1 = wk.overrides[item.key] || item.aisle;
   cb.addEventListener("change", () => {
     row.classList.toggle("checked", cb.checked);
     if (cb.checked) wk.checked[item.key] = true;
     else delete wk.checked[item.key];
     saveGrocery();
+    // Store mode: the first time an item is checked off, confirm/ask its aisle.
+    if (cb.checked && storeMode) maybeAskAisle(item.name, tier1);
+    renderGrocery(lastGroceryRecipes, weekKey); // re-sort: checked items sink to the bottom
   });
   const effectiveAisle = wk.overrides[item.key] || item.aisle;
   row.appendChild(
@@ -1372,6 +1679,8 @@ function extraRow(extra, originWeek, carried) {
     extra.checked = e.target.checked;
     row.classList.toggle("checked", e.target.checked);
     saveGrocery();
+    if (e.target.checked && storeMode) maybeAskAisle(extra.name, extra.aisle || categorizeItem(extra.name));
+    renderGrocery(lastGroceryRecipes, groceryWeek); // re-sort: checked items sink to the bottom
   });
 
   const actions = document.createElement("span");
@@ -1444,6 +1753,36 @@ $("#printList").addEventListener("click", () => {
   if (!groceryList.children.length) return toast("Nothing to print yet.");
   window.print();
 });
+
+// ---- Store mode: sort the grocery list by a store's aisle layout. ----
+function updateStoreHint() {
+  const hint = $("#storeHint");
+  if (!hint) return;
+  const st = activeStore();
+  hint.classList.toggle("hidden", !storeMode);
+  if (storeMode) hint.textContent = st ? `Sorted for ${st.name}. Check items off to confirm their aisle.` : "Store mode on.";
+}
+$("#storeMode").addEventListener("click", async () => {
+  storeMode = !storeMode;
+  localStorage.setItem(STOREMODE_KEY, storeMode ? "1" : "0");
+  $("#storeMode").classList.toggle("on", storeMode);
+  $("#storeMode").setAttribute("aria-pressed", String(storeMode));
+  if (storeMode) await ensureStoreSeeded();
+  updateStoreHint();
+  if (groceryWeek) renderGrocery(lastGroceryRecipes, groceryWeek);
+});
+// Aisle-confirm prompt buttons.
+$("#aislePromptForm").addEventListener("submit", (e) => { e.preventDefault(); finishAislePrompt(true); });
+$("#aislePromptSkip").addEventListener("click", () => finishAislePrompt(false));
+// Restore store-mode state on load (and warm the seed so resolution works).
+(async () => {
+  const btn = $("#storeMode");
+  if (btn) {
+    btn.classList.toggle("on", storeMode);
+    btn.setAttribute("aria-pressed", String(storeMode));
+  }
+  if (storeMode) { await loadSeed(); await ensureStoreSeeded(); updateStoreHint(); }
+})();
 
 // ============================================================
 //  Notes (shared jottings — reminders, ideas, what to restock)
@@ -2596,6 +2935,13 @@ function toggleEmojiPicker() {
   else closeEmojiPicker();
 }
 
+// Whether the calendar grid starts each week on Monday. Per-device (like the
+// colour theme), NOT synced — stored locally so each phone can choose.
+const WEEKSTART_KEY = "mealPlanner.weekStart";
+function weekStartsMonday() {
+  return localStorage.getItem(WEEKSTART_KEY) === "mon";
+}
+
 function renderCalendar() {
   const grid = $("#calGrid");
   if (!grid) return;
@@ -2603,17 +2949,26 @@ function renderCalendar() {
   const month = calMonth.getMonth();
   $("#calLabel").textContent = `${MONTHS_FULL[month]} ${year}`;
 
-  // 6-week window starting on the Sunday on/before the 1st (weeks begin Sunday).
-  const gridStart = startOfWeekSun(new Date(year, month, 1));
+  // 6-week window starting on the Sunday (or Monday) on/before the 1st.
+  const monday = weekStartsMonday();
+  const gridStart = monday ? startOfWeek(new Date(year, month, 1)) : startOfWeekSun(new Date(year, month, 1));
+  const wdEl = $("#calWeekdays");
+  if (wdEl) {
+    const labels = monday
+      ? ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+      : ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+    wdEl.innerHTML = labels.map((d) => `<span>${d}</span>`).join("");
+  }
   const todayKey = isoDate(new Date());
   hideWeekPop();
   grid.innerHTML = "";
 
   for (let w = 0; w < 6; w++) {
     const rowStart = new Date(gridStart.getFullYear(), gridStart.getMonth(), gridStart.getDate() + w * 7);
-    // Rows start Sunday, but the Planner week is Mon–Sun; the "R" bubble tracks
-    // the Monday that falls in this row (rowStart + 1 day).
-    const wkKey = weekKeyOf(new Date(rowStart.getFullYear(), rowStart.getMonth(), rowStart.getDate() + 1));
+    // The Planner week is Mon–Sun; the "R" bubble tracks the Monday in this row.
+    // On Sunday-start rows that Monday is rowStart + 1 day; on Monday-start rows
+    // it's rowStart itself.
+    const wkKey = weekKeyOf(new Date(rowStart.getFullYear(), rowStart.getMonth(), rowStart.getDate() + (monday ? 0 : 1)));
     const row = document.createElement("div");
     row.className = "cal-week-row";
 
@@ -3153,34 +3508,15 @@ const TRACKER_KEY = "mealPlanner.tracker.v1";
 const CHORE_CAT_ORDER = ["General", "Living room", "Kitchen", "Bedroom", "Bathroom", "Outside"];
 let tracker = loadTracker(); // { items: [{id,name,category,done:{"0":[],"1":[]}}] }
 let trackerPushTimer = null;
-let choreViewMode = "list"; // "list" | "history"
+let choreViewMode = "list"; // "list" | "assigned" | "history"
 let historyRange = "week"; // "week" | "month"
 const choreCollapsed = new Set(); // collapsed category names in the checklist
 let choreCollapseSeeded = false; // rooms start collapsed on first render for easy scanning
 
-// Your chores from House Chores.xlsx, grouped by room (seeded once).
-function buildDefaultChores() {
-  const data = [
-    ["General", ["Vacuum", "Take out trash", "Start laundry", "Fold laundry", "Put away laundry", "Water plants"]],
-    ["Living room", ["Pick up", "Dust", "Vacuum"]],
-    ["Kitchen", ["Cook", "Clean counters", "Dishes", "Sweep", "Mop", "Vacuum"]],
-    ["Bedroom", ["Make bed", "Pick up", "Dust", "Vacuum"]],
-    ["Bathroom", ["Pick up", "Wipe surfaces", "Vacuum", "Mop", "Clean toilet", "Clean shower"]],
-    ["Outside", ["Pick up poop", "Mow back yard", "Mow front yard", "Weedwhack", "Trim hedges"]],
-  ];
-  let n = 0;
-  const items = [];
-  data.forEach(([category, names]) =>
-    names.forEach((name) => items.push({ id: "seed-" + n++, name, category, done: { "0": {}, "1": {} } }))
-  );
-  return items;
-}
+// New households start with an empty chore list and build their own categories —
+// no default chores are seeded. (Existing households keep whatever they've synced.)
 function maybeSeedChores() {
-  if (localStorage.getItem("mealPlanner.tracker.seeded")) return;
   localStorage.setItem("mealPlanner.tracker.seeded", "1");
-  if (tracker.items.length) return; // server/local already has data — don't seed
-  tracker.items = buildDefaultChores();
-  saveTracker();
 }
 
 function loadTracker() {
@@ -3227,8 +3563,15 @@ function normalizeChores(items) {
     // very old single `dates` array → attribute past checks to Andrew
     if (Array.isArray(item.dates)) item.dates.forEach((d) => (done["0"][d] = (done["0"][d] || 0) + 1));
     item.done = done;
-    // Which person this chore is assigned to on the Assigned board ("" = nobody).
-    item.assignee = item.assignee === "0" || item.assignee === "1" ? item.assignee : "";
+    // Who this chore is assigned to on the Assigned board — an array of "0"/"1"
+    // (a chore can belong to both). Migrates the old single `assignee` string.
+    const src = Array.isArray(item.assignees)
+      ? item.assignees
+      : item.assignee === "0" || item.assignee === "1"
+      ? [item.assignee]
+      : [];
+    item.assignees = [...new Set(src.filter((p) => p === "0" || p === "1"))];
+    delete item.assignee;
     delete item.dates;
     delete item.person;
   });
@@ -3455,7 +3798,11 @@ function renderChoreCategory(catObj, idx, roomChores) {
   header.className = "chore-cat";
   header.innerHTML = `<span class="chev">${collapsed ? "▸" : "▾"}</span> <span class="cat-name">${escapeHtml(cat)}</span> <span class="cat-count">${roomChores.length}</span>`;
   header.addEventListener("click", () => {
+    const wasCollapsed = choreCollapsed.has(cat);
     toggleCollapse(cat);
+    // When a category is opened, its sub-categories start collapsed so the room
+    // shows just its general chores + tidy sub-headings to drill into.
+    if (wasCollapsed) catObj.subs.forEach((sub) => choreCollapsed.add(cat + SUBSEP + sub));
     renderChores();
   });
   // Right-side controls: Edit-mode reorder/delete + the subtle quick-add "+".
@@ -3591,7 +3938,7 @@ function inlineAddInput(placeholder, extraClass, onSubmit) {
   return form;
 }
 function addChoreTo(cat, sub, name) {
-  tracker.items.push({ id: choreId(), name, category: cat, subcategory: sub, assignee: "", done: { "0": {}, "1": {} } });
+  tracker.items.push({ id: choreId(), name, category: cat, subcategory: sub, assignees: [], done: { "0": {}, "1": {} } });
   ensureCats();
   saveTracker();
   renderChores(); // choreAdd stays set -> the input reopens (empty) for the next add
@@ -3652,7 +3999,10 @@ function bindDragSort(item, handle, itemSel, onDrop) {
     if (!container) return;
     e.preventDefault();
     e.stopPropagation();
-    try { handle.setPointerCapture(e.pointerId); } catch (_) {}
+    // Reordering `item` mid-drag (insertBefore) can silently drop the handle's
+    // pointer capture on some browsers, which killed the drag after one step.
+    // Listen on `window` instead so moves keep flowing wherever the finger goes;
+    // the handle's `touch-action:none` still stops the gesture from scrolling.
     item.classList.add("drag-active");
     const orderKeys = () =>
       [...container.children].filter((c) => c.matches(itemSel)).map((c) => c.dataset.dragkey);
@@ -3673,18 +4023,17 @@ function bindDragSort(item, handle, itemSel, onDrop) {
         if (last && last.nextSibling !== item) container.insertBefore(item, last.nextSibling);
       }
     };
-    const finish = (ev) => {
-      handle.removeEventListener("pointermove", onMove);
-      handle.removeEventListener("pointerup", finish);
-      handle.removeEventListener("pointercancel", finish);
+    const finish = () => {
+      window.removeEventListener("pointermove", onMove, true);
+      window.removeEventListener("pointerup", finish, true);
+      window.removeEventListener("pointercancel", finish, true);
       item.classList.remove("drag-active");
-      try { handle.releasePointerCapture(ev.pointerId); } catch (_) {}
       const keys = orderKeys();
       if (keys.join("|") !== initial) onDrop(keys);
     };
-    handle.addEventListener("pointermove", onMove);
-    handle.addEventListener("pointerup", finish);
-    handle.addEventListener("pointercancel", finish);
+    window.addEventListener("pointermove", onMove, true);
+    window.addEventListener("pointerup", finish, true);
+    window.addEventListener("pointercancel", finish, true);
   });
 }
 // Reorder the category spine to match the dropped order of category names.
@@ -3750,7 +4099,52 @@ function renderActiveChoreView() {
   $("#choreAssign").classList.toggle("hidden", !isList);
   if (!isList) exitChoreModes();
   if (choreViewMode === "history") renderHistory();
+  else if (choreViewMode === "assigned") renderAssigned();
   else renderChores();
+}
+// The Assigned board: one card per person listing the chores assigned to them,
+// each tappable to log a completion for that person (hold to remove one).
+function renderAssigned() {
+  const wrap = $("#choreAssigned");
+  if (!wrap) return;
+  wrap.innerHTML = "";
+  const today = isoDate(new Date());
+  [0, 1].forEach((pi) => {
+    const p = String(pi);
+    const cls = pi === 0 ? "a" : "k";
+    const mine = tracker.items.filter((it) => (it.assignees || []).includes(p));
+    const card = document.createElement("div");
+    card.className = "assigned-card " + cls;
+    const head = document.createElement("div");
+    head.className = "assigned-head";
+    head.innerHTML = `<span class="pbubble ${cls}">${escapeHtml(personInitial(pi))}</span> <span class="assigned-name">${escapeHtml(personName(pi))}</span> <span class="assigned-count">${mine.length}</span>`;
+    card.appendChild(head);
+    if (!mine.length) {
+      const empty = document.createElement("div");
+      empty.className = "assigned-empty";
+      empty.textContent = "No chores assigned yet.";
+      card.appendChild(empty);
+    } else {
+      mine.forEach((it) => {
+        const n = personCount(it, p, today);
+        const done = n > 0;
+        const rowEl = document.createElement("div");
+        rowEl.className = "assigned-item" + (done ? " done" : "");
+        const trail = [it.category, it.subcategory].filter(Boolean).join(" › ");
+        rowEl.innerHTML = `
+          <button type="button" class="assigned-check ${cls}${done ? " on" : ""}" aria-label="Mark ${escapeHtml(it.name)} done">${done ? "✓" : ""}</button>
+          <span class="assigned-item-name">${escapeHtml(it.name)}${trail ? `<span class="assigned-item-cat">${escapeHtml(trail)}</span>` : ""}</span>
+          ${n > 1 ? `<span class="assigned-item-n">${n}×</span>` : ""}`;
+        bindCount(
+          rowEl.querySelector(".assigned-check"),
+          () => { incPersonDate(it, p, today); renderAssigned(); },
+          () => { decPersonDate(it, p, today); renderAssigned(); }
+        );
+        card.appendChild(rowEl);
+      });
+    }
+    wrap.appendChild(card);
+  });
 }
 // Leave any temporary checklist mode (Edit / Assign) and reset the toggle buttons.
 function exitChoreModes() {
@@ -3771,7 +4165,10 @@ function updateChoreModeButtons() {
 // it's on, the two A/K buttons already on each chore assign that chore to a person
 // (instead of logging a completion). Tap the assigned person again to unassign. ----
 function toggleAssignee(item, p) {
-  item.assignee = item.assignee === p ? "" : p;
+  if (!Array.isArray(item.assignees)) item.assignees = [];
+  const i = item.assignees.indexOf(p);
+  if (i === -1) item.assignees.push(p);
+  else item.assignees.splice(i, 1);
   saveTracker();
   renderChores(); // repaint bubble fills + the assignee stripe
 }
@@ -3821,6 +4218,18 @@ $("#namesEditor").addEventListener("submit", (e) => {
   });
   input.addEventListener("change", () => saveNamesEditor());
 });
+
+// ---- Per-device: start the calendar week on Monday (Settings tab). Stored
+// locally (not synced), so each device chooses its own layout. ----
+(() => {
+  const cb = document.getElementById("weekStartMonday");
+  if (!cb) return;
+  cb.checked = weekStartsMonday();
+  cb.addEventListener("change", () => {
+    localStorage.setItem(WEEKSTART_KEY, cb.checked ? "mon" : "sun");
+    renderCalendarIfActive();
+  });
+})();
 
 // ---- Colour-theme editor (Settings tab) ----
 // State lives in window.Theme (theme.js); it is a per-device preference and is
@@ -3942,9 +4351,10 @@ function choreRow(item) {
   const row = document.createElement("div");
   const done = choreDoneToday(item);
   const assigning = $("#choreChecklist").classList.contains("assigning");
-  const assignee = item.assignee === "0" || item.assignee === "1" ? item.assignee : "";
+  const assignees = Array.isArray(item.assignees) ? item.assignees : [];
   row.className = "chore-item" + (done ? " done" : "") + (assigning ? " assign-mode" : "");
-  row.dataset.assignee = assignee; // drives the coloured "whose job" stripe
+  // "0", "1", "both", or "" — drives the coloured "whose job" stripe on the left.
+  row.dataset.assignee = assignees.length >= 2 ? "both" : assignees[0] || "";
   const today = isoDate(new Date());
   const streak = choreStreak(item);
   const aN = personCount(item, "0", today);
@@ -3953,7 +4363,7 @@ function choreRow(item) {
   // In Assign mode the same buttons pick who the chore belongs to (filled = theirs).
   const pbtn = (p, cls, letter, name, n) => {
     if (assigning) {
-      const on = assignee === p;
+      const on = assignees.includes(p);
       const t = on ? `Assigned to ${name} — tap to unassign` : `Assign to ${name}`;
       return `<button type="button" class="pbtn ${cls}${on ? " assign-on" : ""}" data-p="${p}" aria-pressed="${on}" aria-label="${escapeHtml(t)}" title="${escapeHtml(t)}">${escapeHtml(letter)}</button>`;
     }
@@ -4022,6 +4432,7 @@ document.querySelectorAll("#choreView .chip").forEach((btn) => {
     document.querySelectorAll("#choreView .chip").forEach((b) => b.classList.toggle("active", b === btn));
     $("#choreChecklist").classList.toggle("hidden", choreViewMode !== "list");
     $("#choreHistory").classList.toggle("hidden", choreViewMode !== "history");
+    $("#choreAssigned").classList.toggle("hidden", choreViewMode !== "assigned");
     renderActiveChoreView();
   });
 });
@@ -4197,6 +4608,53 @@ function closeModal() {
   modal.classList.add("hidden");
   modalBody.innerHTML = "";
   releaseWakeLock();
+}
+
+// ---- "What's new" changelog -------------------------------------------------
+// Show any changelog entries this device hasn't acknowledged yet, then record
+// the current build so they aren't shown again. First-ever installs are marked
+// caught-up without a popup (there's nothing "new" to a fresh install).
+function maybeShowWhatsNew() {
+  let seen = parseInt(localStorage.getItem(SEEN_BUILD_KEY), 10);
+  if (!Number.isFinite(seen)) {
+    // No "seen" marker yet. Tell two cases apart:
+    //  • Brand-new install — nothing is "new" to them, so catch up silently.
+    //  • Existing device from before this feature shipped — it already has app
+    //    data, so show the changelog once (treat as never having seen anything).
+    const usedBefore = Object.keys(localStorage).some((k) => k.startsWith("mealPlanner."));
+    if (!usedBefore) {
+      localStorage.setItem(SEEN_BUILD_KEY, String(APP_BUILD));
+      return;
+    }
+    seen = 0; // existing user: everything from build 1 up is new to them
+  }
+  const unseen = CHANGELOG.filter((e) => e.build > seen).sort((a, b) => b.build - a.build);
+  if (!unseen.length) return;
+
+  $("#whatsNewBody").innerHTML = unseen
+    .map(
+      (e) => `
+      <div class="whatsnew-release">
+        <p class="whatsnew-date">${escapeHtml(e.date || "")}</p>
+        <ul class="whatsnew-list">
+          ${e.changes.map((c) => `<li>${escapeHtml(c)}</li>`).join("")}
+        </ul>
+      </div>`
+    )
+    .join("");
+  $("#whatsNew").classList.remove("hidden");
+}
+function dismissWhatsNew() {
+  $("#whatsNew").classList.add("hidden");
+  localStorage.setItem(SEEN_BUILD_KEY, String(APP_BUILD)); // mark caught up
+}
+{
+  const wn = $("#whatsNew");
+  $("#whatsNewClose").addEventListener("click", dismissWhatsNew);
+  $("#whatsNewGotIt").addEventListener("click", dismissWhatsNew);
+  wn.addEventListener("click", (e) => {
+    if (e.target === wn) dismissWhatsNew();
+  });
 }
 async function showRecipe(id) {
   modal.classList.remove("hidden");
@@ -4397,6 +4855,7 @@ async function init() {
   maybeSeedChores(); // one-time: load the House Chores list if the tracker is empty
   runSearch(); // friendly starter results
   setTopbarHeight();
+  maybeShowWhatsNew(); // greet with a changelog if this device is behind
 }
 
 // Track the sticky app-bar height so the history weekday row can sit just below it.
