@@ -8,6 +8,14 @@
 // ============================================================
 const CHANGELOG = [
   {
+    build: 2,
+    date: "August 4, 2026",
+    changes: [
+      "Settings looks tidier: the calendar options now sit in their own card, with a “Household Members” heading above the names.",
+      "Chores assigned to both people now show a matching two-tone stripe that wraps the card’s rounded corner, just like a single assignment.",
+    ],
+  },
+  {
     build: 1,
     date: "August 4, 2026",
     changes: [

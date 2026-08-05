@@ -663,6 +663,7 @@ button { font-family: inherit; }
   border-radius: 12px;
 }
 .settings-subhead {
+  flex-basis: 100%;
   margin: 0 0 4px;
   font-family: var(--font-display);
   font-size: 1.05rem;
@@ -2084,12 +2085,22 @@ button { font-family: inherit; }
 .pbtn.assign-on.k { background: var(--katie); border-color: var(--katie); color: var(--on-katie); }
 .chore-item[data-assignee="0"] { box-shadow: inset 3px 0 0 0 var(--green), var(--shadow); }
 .chore-item[data-assignee="1"] { box-shadow: inset 3px 0 0 0 var(--katie), var(--shadow); }
-/* Assigned to both: a split green/rose stripe (box-shadow can't gradient). */
+/* Assigned to both: green wraps the top-left corner, rose the bottom-left. Each
+   half is an inset box-shadow so the stripe hugs the card's rounded corners
+   exactly like a single assignment does (a plain rectangle would square them). */
 .chore-item[data-assignee="both"] { position: relative; }
+.chore-item[data-assignee="both"]::before,
+.chore-item[data-assignee="both"]::after {
+  content: ""; position: absolute; left: 0; right: 0; height: 50%;
+  pointer-events: none; border-radius: inherit;
+}
 .chore-item[data-assignee="both"]::before {
-  content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
-  border-top-left-radius: inherit; border-bottom-left-radius: inherit;
-  background: linear-gradient(var(--green) 0 50%, var(--katie) 50% 100%);
+  top: 0; border-bottom-left-radius: 0; border-bottom-right-radius: 0;
+  box-shadow: inset 3px 0 0 0 var(--green);
+}
+.chore-item[data-assignee="both"]::after {
+  bottom: 0; border-top-left-radius: 0; border-top-right-radius: 0;
+  box-shadow: inset 3px 0 0 0 var(--katie);
 }
 /* While assigning, dim the completion pips/streaks so the buttons read as the
    action rather than as today's tally — and stop the pips taking taps meant for
@@ -2131,9 +2142,16 @@ button { font-family: inherit; }
 .assigned-item-n { margin-left: auto; font-size: 12px; color: var(--muted); }
 
 /* ---- Settings: a simple checkbox row (e.g. start week on Monday). ---- */
-.calendar-prefs { margin-top: 18px; }
-.toggle-row { display: flex; align-items: center; gap: 10px; cursor: pointer; padding: 4px 0; }
-.toggle-row input { width: 18px; height: 18px; flex: none; accent-color: var(--accent); }
+.calendar-prefs {
+  padding: 14px;
+  margin-bottom: 16px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+.calendar-prefs .names-editor-hint { margin-top: 6px; }
+.toggle-row { display: flex; align-items: center; gap: 10px; cursor: pointer; padding: 6px 0 2px; }
+.toggle-row input { width: 18px; height: 18px; flex: none; accent-color: var(--green); cursor: pointer; }
 
 /* ---- Store mode ---- */
 #storeMode.on { background: var(--accent); border-color: var(--accent); color: var(--on-accent, #fff); }
