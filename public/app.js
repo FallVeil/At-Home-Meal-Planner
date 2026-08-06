@@ -12,7 +12,7 @@ const CHANGELOG = [
     date: "August 5, 2026",
     changes: [
       "Fixed households leaking into each other: signing a different household into the same phone could show it another family's calendar and events. Households are now kept fully separate, and a phone no longer carries one household's data into the next login.",
-      "Cleanup: the calendars and other data that had leaked into the test/other households were wiped. Your own Andrew-&-Katie calendar, events and everything else are untouched.",
+      "Cleanup: any data that had leaked into a household it didn't belong to has been removed from those households. Your own household's calendar, events and everything else are untouched.",
       "Recipes saved to your meal plans now stay viewable even after the daily recipe limit is reached or the app restarts — the full ingredients and steps are cached for good.",
       "You can now uncheck a chore on the Assigned board — tap a checked-off chore again to clear it.",
     ],
