@@ -321,6 +321,16 @@
           <p class="names-editor-hint">Changes how the calendar grid is laid out on this device only.</p>
         </div>
 
+        <div class="weather-prefs">
+          <h3 class="settings-subhead">Weather</h3>
+          <p class="names-editor-hint">The town shown on the Home weather card. Syncs across your devices.</p>
+          <form id="weatherForm" class="weather-form">
+            <input type="text" id="weatherInput" autocomplete="off" spellcheck="false" placeholder="e.g. Alton, Illinois" aria-label="Weather location" />
+            <button type="submit" class="primary">Save</button>
+          </form>
+          <div id="weatherResults" class="weather-results"></div>
+        </div>
+
         <div class="theme-editor">
           <h3 class="settings-subhead">Appearance</h3>
           <p class="names-editor-hint">Pick a colour theme, or build your own.</p>

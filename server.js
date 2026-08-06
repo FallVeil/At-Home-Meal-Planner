@@ -466,6 +466,112 @@ app.get("/api/config", (req, res) => {
   });
 });
 
+// ---- Weather (Open-Meteo: free, no API key, no signup) ----
+// Defaults to Alton, IL; the frontend passes lat/lon from the saved Settings
+// location. Cached briefly in memory so tab-switching doesn't re-hit the API.
+const DEFAULT_WEATHER = { lat: 38.8906, lon: -90.1843 };
+const weatherCache = new Map();
+const WEATHER_TTL = 1000 * 60 * 10; // 10 minutes
+
+// Classify a WMO code as a kind of precipitation (or null when it's dry), so we
+// can spot the next change and tag it, e.g. "Rain in 2 hr".
+function precipKind(code) {
+  const c = Number(code);
+  if (c >= 95) return { emoji: "⛈️", label: "Storms" };
+  if ((c >= 71 && c <= 77) || c === 85 || c === 86) return { emoji: "❄️", label: "Snow" };
+  if ((c >= 61 && c <= 67) || (c >= 80 && c <= 82)) return { emoji: "🌧️", label: "Rain" };
+  if (c >= 51 && c <= 57) return { emoji: "🌦️", label: "Drizzle" };
+  return null; // clear / cloudy / fog — nothing falling
+}
+// Look up to 6 hours ahead for the next flip in precipitation state. Returns a
+// small tag { emoji, label, hours } — precip starting, or things clearing — or
+// null when the next several hours look like more of the same.
+function nextWeatherChange(cur, hourly) {
+  if (!hourly || !Array.isArray(hourly.time) || !Array.isArray(hourly.weather_code)) return null;
+  const nowWet = precipKind(cur.weather_code);
+  const curTime = cur.time || "";
+  // Align to the first hourly slot at or after the current time.
+  let start = hourly.time.findIndex((t) => t >= curTime);
+  if (start < 0) start = 0;
+  const probs = hourly.precipitation_probability || [];
+  for (let k = 1; k <= 6; k++) {
+    const i = start + k;
+    if (i >= hourly.time.length) break;
+    const kind = precipKind(hourly.weather_code[i]);
+    if (!nowWet && kind) {
+      // Precip beginning — require a non-trivial chance to avoid false alarms.
+      const p = probs[i];
+      if (p == null || p >= 35) return { emoji: kind.emoji, label: kind.label, hours: k };
+    } else if (nowWet && !kind) {
+      // It's currently wet and the sky opens up.
+      return { emoji: "🌤️", label: "Clearing", hours: k };
+    }
+  }
+  return null;
+}
+
+app.get("/api/weather", async (req, res) => {
+  const lat = Number(req.query.lat);
+  const lon = Number(req.query.lon);
+  const useLat = Number.isFinite(lat) ? lat : DEFAULT_WEATHER.lat;
+  const useLon = Number.isFinite(lon) ? lon : DEFAULT_WEATHER.lon;
+  const key = `${useLat.toFixed(3)},${useLon.toFixed(3)}`;
+  const hit = weatherCache.get(key);
+  if (hit && Date.now() - hit.at < WEATHER_TTL) return res.json(hit.data);
+  try {
+    const url = new URL("https://api.open-meteo.com/v1/forecast");
+    url.searchParams.set("latitude", useLat);
+    url.searchParams.set("longitude", useLon);
+    url.searchParams.set("current", "temperature_2m,apparent_temperature,is_day,weather_code");
+    url.searchParams.set("hourly", "weather_code,precipitation_probability");
+    url.searchParams.set("temperature_unit", "fahrenheit");
+    url.searchParams.set("timezone", "auto");
+    url.searchParams.set("forecast_days", "2");
+    const r = await fetch(url);
+    if (!r.ok) throw new Error(`Open-Meteo ${r.status}`);
+    const j = await r.json();
+    const cur = j.current || {};
+    const round = (v) => (Number.isFinite(v) ? Math.round(v) : null);
+    const data = {
+      temp: round(cur.temperature_2m),
+      feels: round(cur.apparent_temperature),
+      code: Number.isFinite(cur.weather_code) ? cur.weather_code : null,
+      isDay: cur.is_day !== 0,
+      soon: nextWeatherChange(cur, j.hourly),
+    };
+    weatherCache.set(key, { at: Date.now(), data });
+    res.json(data);
+  } catch (e) {
+    res.status(502).json({ error: "Could not reach the weather service." });
+  }
+});
+
+// Turn a typed town into coordinates (used by the Settings location field).
+app.get("/api/geocode", async (req, res) => {
+  const q = (req.query.q || "").toString().trim();
+  if (!q) return res.json({ results: [] });
+  try {
+    const url = new URL("https://geocoding-api.open-meteo.com/v1/search");
+    url.searchParams.set("name", q);
+    url.searchParams.set("count", "5");
+    url.searchParams.set("language", "en");
+    url.searchParams.set("format", "json");
+    const r = await fetch(url);
+    if (!r.ok) throw new Error(`geocoding ${r.status}`);
+    const j = await r.json();
+    const results = (j.results || []).map((x) => ({
+      name: x.name,
+      admin1: x.admin1 || "",
+      country: x.country_code || x.country || "",
+      lat: x.latitude,
+      lon: x.longitude,
+    }));
+    res.json({ results });
+  } catch (e) {
+    res.status(502).json({ error: "Could not look up that place." });
+  }
+});
+
 // Every household's data lives under its own key prefix so families never see
 // each other's plan, chores, calendar, etc.
 const keyFor = (req, name) => `hh:${req.householdId}:${name}`;

@@ -1042,6 +1042,44 @@ button { font-family: inherit; }
   color: var(--muted); font-size: 0.82rem; text-align: right;
 }
 .dash-empty { color: var(--muted); font-size: 0.88rem; padding: 2px 0; }
+/* Home weather card — one compact row */
+.dash-weather { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.dash-weather .wx-loading, .dash-weather .wx-err { color: var(--muted); font-size: 0.85rem; }
+.wx-icon { font-size: 1.35rem; line-height: 1; flex: none; }
+.wx-temp { font-size: 1.25rem; font-weight: 700; color: var(--ink); }
+.wx-cond { font-size: 0.85rem; color: var(--muted); }
+.wx-soon {
+  font-size: 0.72rem; font-weight: 600; color: var(--ink);
+  background: var(--bg); border: 1px solid var(--line);
+  border-radius: 999px; padding: 2px 9px; white-space: nowrap;
+}
+.wx-place { margin-left: auto; font-size: 0.72rem; color: var(--accent); font-weight: 600; }
+/* Settings: weather location picker — its own card, like the others */
+.weather-prefs {
+  padding: 14px;
+  margin-bottom: 16px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+.weather-form { display: flex; gap: 8px; margin-top: 8px; }
+.weather-form input {
+  flex: 1; min-width: 0; padding: 9px 11px; font-size: 16px;
+  border: 1px solid var(--line); border-radius: 10px; background: var(--card); color: var(--ink);
+}
+.weather-form input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.weather-form button {
+  flex: none; background: var(--green); color: #fff; border: none;
+  padding: 9px 16px; border-radius: 10px; font-weight: 600; cursor: pointer;
+}
+.weather-form button:hover { background: var(--green-dark); }
+.weather-results { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.weather-hint { color: var(--muted); font-size: 0.85rem; }
+.weather-choice {
+  text-align: left; background: var(--card); color: var(--ink);
+  border: 1px solid var(--line); border-radius: 10px; padding: 9px 11px; cursor: pointer; font-size: 0.9rem;
+}
+.weather-choice:hover { border-color: var(--accent); color: var(--accent); }
 .dash-row { display: flex; align-items: center; gap: 10px; cursor: pointer; }
 .dash-row-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.92rem; }
 .recipe-row img { width: 36px; height: 36px; border-radius: 7px; object-fit: cover; background: #383b35; flex: none; }

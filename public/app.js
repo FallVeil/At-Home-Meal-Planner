@@ -8,6 +8,14 @@
 // ============================================================
 const CHANGELOG = [
   {
+    build: 5,
+    date: "August 5, 2026",
+    changes: [
+      "New live weather card at the top of the Home screen — current temperature and conditions, with a heads-up tag when rain, storms or snow are due soon (e.g. “🌧️ Rain in 2 hr”).",
+      "Set your town under Settings → Weather, now its own card; it defaults to your home town and syncs across your devices.",
+    ],
+  },
+  {
     build: 4,
     date: "August 5, 2026",
     changes: [
@@ -161,6 +169,8 @@ const DEFAULT_PEOPLE = ["Andrew", "Katie", "Person 3", "Person 4", "Person 5", "
 // Each person's colour is household-synced (every phone matches), unlike the
 // per-device colour theme. Defaults mirror Theme.PERSON_COLORS in theme.js.
 const DEFAULT_COLORS = ["#4f8c62", "#cf8a55", "#5b8fb0", "#b07cc6", "#cc6b7a", "#5fae9c"];
+// Home-dashboard weather location (household-synced). Defaults to Alton, IL.
+const DEFAULT_WEATHER = { label: "Alton, IL", lat: 38.8906, lon: -90.1843 };
 let settings = loadSettings();
 let settingsPushTimer = null;
 function loadSettings() {
@@ -186,7 +196,17 @@ function normalizeSettings(s) {
     const v = typeof c[i] === "string" ? c[i].trim().toLowerCase() : "";
     colors.push(/^#[0-9a-f]{6}$/.test(v) ? v : DEFAULT_COLORS[i] || DEFAULT_COLORS[0]);
   }
-  return { people, colors };
+  const out = { people, colors };
+  // Carry the weather location through if it's a valid {label,lat,lon}.
+  const w = s.weather;
+  if (w && typeof w === "object" && Number.isFinite(w.lat) && Number.isFinite(w.lon)) {
+    out.weather = { label: String(w.label || "").slice(0, 60), lat: w.lat, lon: w.lon };
+  }
+  return out;
+}
+// The household's saved weather location, falling back to the Alton default.
+function weatherLoc() {
+  return (settings && settings.weather) || DEFAULT_WEATHER;
 }
 // How many people the household currently has, and their indices [0..count-1].
 function peopleCount() {
@@ -3507,12 +3527,81 @@ function dashEmpty(msg) {
   return d;
 }
 
+// Map a WMO weather code to an emoji + short label. Night swaps a couple of
+// icons (clear/partly-cloudy) for their moon variants.
+function describeWeather(code, isDay) {
+  const c = Number(code);
+  if (c === 0) return { icon: isDay ? "☀️" : "🌙", text: "Clear" };
+  if (c === 1 || c === 2) return { icon: isDay ? "🌤️" : "☁️", text: "Partly cloudy" };
+  if (c === 3) return { icon: "☁️", text: "Overcast" };
+  if (c === 45 || c === 48) return { icon: "🌫️", text: "Fog" };
+  if (c >= 51 && c <= 57) return { icon: "🌦️", text: "Drizzle" };
+  if (c >= 61 && c <= 67) return { icon: "🌧️", text: "Rain" };
+  if (c >= 71 && c <= 77) return { icon: "❄️", text: "Snow" };
+  if (c >= 80 && c <= 82) return { icon: "🌧️", text: "Showers" };
+  if (c === 85 || c === 86) return { icon: "🌨️", text: "Snow showers" };
+  if (c >= 95) return { icon: "⛈️", text: "Thunderstorm" };
+  return { icon: "🌡️", text: "Weather" };
+}
+
+// Cache the last reading in memory so switching tabs doesn't re-hit the API.
+let weatherCache = null; // { at, key, data }
+const WEATHER_CLIENT_TTL = 1000 * 60 * 10; // 10 minutes
+async function loadWeather(force) {
+  const loc = weatherLoc();
+  const key = `${loc.lat},${loc.lon}`;
+  if (
+    !force &&
+    weatherCache &&
+    weatherCache.key === key &&
+    Date.now() - weatherCache.at < WEATHER_CLIENT_TTL
+  ) {
+    return weatherCache.data;
+  }
+  const r = await fetch(`/api/weather?lat=${encodeURIComponent(loc.lat)}&lon=${encodeURIComponent(loc.lon)}`);
+  if (!r.ok) throw new Error("weather");
+  const data = await r.json();
+  if (data && data.error) throw new Error(data.error);
+  weatherCache = { at: Date.now(), key, data };
+  return data;
+}
+
 function renderHome() {
   const grid = $("#dashGrid");
   if (!grid) return;
   grid.innerHTML = "";
   const todayKey = isoDate(new Date());
   const weekKey = weekKeyOf(new Date());
+
+  // — Live weather (Open-Meteo; location set in Settings, defaults to Alton) —
+  {
+    const card = dashCard("Weather", () => activateTab("settings"));
+    const body = card.querySelector(".dash-body");
+    const loc = weatherLoc();
+    const wx = document.createElement("div");
+    wx.className = "dash-weather";
+    wx.innerHTML = `<span class="wx-loading">Loading…</span>`;
+    body.appendChild(wx);
+    loadWeather()
+      .then((d) => {
+        const { icon, text } = describeWeather(d.code, d.isDay);
+        const s = d.soon;
+        const tag =
+          s && s.emoji && s.label
+            ? `<span class="wx-soon">${s.emoji} ${escapeHtml(s.label)} in ${s.hours} hr</span>`
+            : "";
+        wx.innerHTML =
+          `<span class="wx-icon" aria-hidden="true">${icon}</span>` +
+          `<span class="wx-temp">${Number.isFinite(d.temp) ? d.temp + "°" : "—"}</span>` +
+          `<span class="wx-cond">${escapeHtml(text)}</span>` +
+          tag +
+          `<span class="wx-place">${escapeHtml(loc.label || "")}</span>`;
+      })
+      .catch(() => {
+        wx.innerHTML = `<span class="wx-err">Weather unavailable right now.</span>`;
+      });
+    grid.appendChild(card);
+  }
 
   // — Grocery quick-add (top of the screen; items go straight to this week) —
   {
@@ -4465,6 +4554,61 @@ $("#peopleList")?.addEventListener("change", (e) => {
   cb.addEventListener("change", () => {
     localStorage.setItem(WEEKSTART_KEY, cb.checked ? "mon" : "sun");
     renderCalendarIfActive();
+  });
+})();
+
+// ---- Weather location editor (Settings tab). Types a town, geocodes it via
+// the server, and stores {label,lat,lon} in the synced settings blob. ----
+function renderWeatherInput() {
+  const input = document.getElementById("weatherInput");
+  if (input && document.activeElement !== input) input.value = weatherLoc().label || "";
+}
+(() => {
+  const form = document.getElementById("weatherForm");
+  const input = document.getElementById("weatherInput");
+  const out = document.getElementById("weatherResults");
+  if (!form || !input || !out) return;
+  renderWeatherInput();
+
+  // Commit a chosen place: save it, clear the picker, and refresh the card.
+  function choose(place) {
+    const label = [place.name, place.admin1 || place.country].filter(Boolean).join(", ");
+    settings = normalizeSettings({ ...settings, weather: { label, lat: place.lat, lon: place.lon } });
+    saveSettings();
+    weatherCache = null; // force a fresh reading for the new spot
+    out.innerHTML = "";
+    input.value = label;
+    renderHomeIfActive();
+    toast(`Weather set to ${label}`);
+  }
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const q = input.value.trim();
+    if (!q) return;
+    out.innerHTML = `<div class="weather-hint">Searching…</div>`;
+    try {
+      const r = await fetch(`/api/geocode?q=${encodeURIComponent(q)}`);
+      const j = await r.json();
+      const results = (j && j.results) || [];
+      if (!results.length) {
+        out.innerHTML = `<div class="weather-hint">No matches — try adding the state or country.</div>`;
+        return;
+      }
+      if (results.length === 1) return choose(results[0]);
+      // Multiple hits: let the user pick the right one.
+      out.innerHTML = "";
+      results.forEach((p) => {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "weather-choice";
+        b.textContent = [p.name, p.admin1, p.country].filter(Boolean).join(", ");
+        b.addEventListener("click", () => choose(p));
+        out.appendChild(b);
+      });
+    } catch {
+      out.innerHTML = `<div class="weather-hint">Couldn't look that up right now.</div>`;
+    }
   });
 })();
 
