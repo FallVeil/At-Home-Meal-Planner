@@ -8,6 +8,13 @@
 // ============================================================
 const CHANGELOG = [
   {
+    build: 7,
+    date: "August 5, 2026",
+    changes: [
+      "On the grocery list, an aisle where everything is checked off now folds itself away automatically, so your list stays short as you shop. You can still tap it open any time.",
+    ],
+  },
+  {
     build: 6,
     date: "August 5, 2026",
     changes: [
@@ -1192,7 +1199,8 @@ let grocery = loadGrocery(); // { [weekKey]: { checked: {itemKey:true}, extras: 
 let lastGroceryRecipes = [];
 let groceryPushTimer = null;
 let staplesExpanded = false; // "Pantry staples" group collapsed by default
-const groceryCollapsed = new Set(); // collapsed aisle names (expanded by default)
+const groceryCollapsed = new Set(); // aisle names the user forced collapsed
+const groceryExpanded = new Set(); // aisle names the user forced open (overrides auto-collapse of all-checked aisles)
 
 function loadGrocery() {
   try {
@@ -1679,8 +1687,14 @@ function renderGrocery(recipes, weekKey) {
     .sort(sortAisles)
     .forEach((key) => {
       const group = byAisle[key];
-      const collapsed = groceryCollapsed.has(key);
       const count = group.extras.length + group.items.length;
+      const checkedCount =
+        group.extras.filter((row) => row.extra.checked).length +
+        group.items.filter((item) => wk.checked[item.key]).length;
+      const allChecked = count > 0 && checkedCount === count;
+      // A fully checked-off aisle collapses by default; a partial one stays open.
+      // The user's explicit toggle (either set) always wins over that default.
+      const collapsed = groceryExpanded.has(key) ? false : groceryCollapsed.has(key) || allChecked;
       const section = document.createElement("div");
       section.className = "aisle" + (collapsed ? " collapsed" : "");
       const header = document.createElement("h3");
@@ -1700,7 +1714,8 @@ function renderGrocery(recipes, weekKey) {
       }
       header.innerHTML = `<span class="chev">${collapsed ? "▸" : "▾"}</span> ${label} <span class="aisle-count">${count}</span>${landmark}`;
       header.addEventListener("click", () => {
-        groceryCollapsed.has(key) ? groceryCollapsed.delete(key) : groceryCollapsed.add(key);
+        if (collapsed) { groceryExpanded.add(key); groceryCollapsed.delete(key); }
+        else { groceryCollapsed.add(key); groceryExpanded.delete(key); }
         renderGrocery(lastGroceryRecipes, weekKey);
       });
       const itemsWrap = document.createElement("div");
