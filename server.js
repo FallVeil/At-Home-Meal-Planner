@@ -41,6 +41,19 @@ async function redisGetJSON(key) {
 async function redisSetJSON(key, obj) {
   await redisCmd(["SET", key, JSON.stringify(obj)]);
 }
+// Bulk read several keys at once; returns parsed values (null where absent).
+async function redisMGetJSON(keys) {
+  if (!keys.length) return [];
+  const vals = await redisCmd(["MGET", ...keys]);
+  return (vals || []).map((v) => {
+    if (v == null) return null;
+    try {
+      return typeof v === "string" ? JSON.parse(v) : v;
+    } catch {
+      return null;
+    }
+  });
+}
 
 // Spoonacular tags recipes with many overlapping dishTypes, so type=X alone
 // leaks (salads into entrees, etc.). We post-filter results: keep a recipe only
@@ -236,6 +249,16 @@ const recipePool = new Map();
 const POOL_MAX = 500;
 const POOL_TTL = 1000 * 60 * 60 * 24; // 24 hours
 const POOL_FILE = path.join(__dirname, "pool-cache.json");
+// Also mirrored to Redis (when shared storage is on) so the search fallback pool
+// survives Render's ephemeral disk being wiped on redeploy/cold-start.
+const POOL_REDIS_KEY = "pool:v1";
+
+// Full recipe details (ingredients/steps/nutrition) live under a shared global
+// key — recipes aren't household-specific. Unlike the 6h memory cache and the
+// 24h pool, this cache is PERSISTENT (no TTL): once a recipe is cached here it
+// stays viewable forever, even after the daily Spoonacular quota is gone. Every
+// recipe saved to a meal plan is cached here so plans are always openable.
+const recipeKey = (id) => `recipe:v1:${id}`;
 
 function addToPool(r) {
   recipePool.set(r.id, {
@@ -296,7 +319,104 @@ function schedulePoolSave() {
     const now = Date.now();
     const fresh = [...recipePool.values()].filter((r) => now - (r._t || 0) < POOL_TTL);
     fs.writeFile(POOL_FILE, JSON.stringify(fresh), () => {});
+    if (storageEnabled) redisSetJSON(POOL_REDIS_KEY, fresh).catch(() => {}); // survive redeploys
   }, 3000);
+}
+
+// Merge the Redis-mirrored pool on startup so the home/search fallback still has
+// recipes after Render wipes the local pool-cache.json file.
+async function loadPoolFromRedis() {
+  if (!storageEnabled) return;
+  try {
+    const arr = await redisGetJSON(POOL_REDIS_KEY);
+    if (!Array.isArray(arr)) return;
+    const now = Date.now();
+    for (const r of arr) {
+      if (r && r.id != null && now - (r._t || 0) < POOL_TTL && !recipePool.has(r.id)) recipePool.set(r.id, r);
+    }
+    if (recipePool.size) console.log(`  Pool holds ${recipePool.size} saved recipes (incl. Redis).`);
+  } catch {
+    /* Redis hiccup — the disk pool (if any) still applies */
+  }
+}
+
+// Resolve full details for a set of recipe ids using every cache layer before
+// touching the API: 6h memory -> persistent Redis -> Spoonacular (results then
+// written back to both caches). `allowFetch:false` stays cache-only (used when
+// there's no API key). Returns { recipes:{id:recipe}, fetched, apiError } — on an
+// API failure it still returns whatever was already cached, so saved recipes
+// keep opening once the daily quota is gone.
+async function resolveRecipes(ids, { allowFetch = true } = {}) {
+  const recipes = {};
+  let missing = [];
+  for (const id of ids) {
+    const c = cacheGet(`recipe:${id}`);
+    if (c) recipes[id] = c;
+    else missing.push(id);
+  }
+  if (missing.length && storageEnabled) {
+    try {
+      const vals = await redisMGetJSON(missing.map(recipeKey));
+      const stillMissing = [];
+      missing.forEach((id, i) => {
+        if (vals[i]) {
+          recipes[id] = vals[i];
+          cacheSet(`recipe:${id}`, vals[i]); // warm the fast in-memory cache
+        } else {
+          stillMissing.push(id);
+        }
+      });
+      missing = stillMissing;
+    } catch {
+      /* Redis hiccup — fall through to the API */
+    }
+  }
+  let apiError = null;
+  let fetched = 0;
+  if (missing.length && allowFetch) {
+    try {
+      const data = await spoonFetch("/recipes/informationBulk", {
+        ids: missing.join(","),
+        includeNutrition: "true",
+      });
+      for (const r of data) {
+        const clean = normalizeRecipe(r);
+        cacheSet(`recipe:${r.id}`, clean);
+        recipes[r.id] = clean;
+        fetched++;
+        if (storageEnabled) redisSetJSON(recipeKey(r.id), clean).catch(() => {}); // persist forever
+      }
+    } catch (e) {
+      apiError = e; // quota/key failure — caller still gets the cached hits above
+    }
+  }
+  return { recipes, fetched, apiError };
+}
+
+// After a plan is saved, make sure every recipe in it has its full details in the
+// persistent cache, so a planned recipe always opens even after the quota runs
+// out. Best-effort: only fetches ids not already cached, so once warmed it costs
+// a single (free) Redis read and no API calls.
+async function cachePlanRecipes(plan) {
+  if (!storageEnabled) return;
+  if (!(API_KEY && API_KEY !== "your_key_here")) return;
+  const ids = [
+    ...new Set(
+      Object.values(plan || {})
+        .flat()
+        .map((r) => r && r.id)
+        .filter((x) => x != null)
+        .map(String)
+    ),
+  ];
+  if (!ids.length) return;
+  try {
+    const vals = await redisMGetJSON(ids.map(recipeKey));
+    const missing = ids.filter((_, i) => !vals[i]);
+    if (missing.length) await resolveRecipes(missing, { allowFetch: true });
+  } catch {
+    /* best effort — will retry on the next plan save */
+  }
 }
 
 // Turn raw upstream errors into friendly messages for the UI.
@@ -362,7 +482,9 @@ app.get("/api/plan", async (req, res) => {
 app.put("/api/plan", async (req, res) => {
   if (!storageEnabled) return res.json({ enabled: false });
   try {
-    await redisSetJSON(keyFor(req, "plan"), req.body?.plan || {});
+    const plan = req.body?.plan || {};
+    await redisSetJSON(keyFor(req, "plan"), plan);
+    cachePlanRecipes(plan).catch(() => {}); // fire-and-forget: keep planned recipes viewable
     res.json({ ok: true });
   } catch {
     res.status(502).json({ error: "Could not save the shared plan." });
@@ -594,8 +716,9 @@ app.get("/api/search", async (req, res) => {
 });
 
 // Full details (with ingredients) for one or more recipe ids: /api/recipes?ids=1,2,3
+// Serves from the persistent cache first, so recipes saved to a plan stay
+// viewable even with no API key or after the daily quota is exhausted.
 app.get("/api/recipes", async (req, res) => {
-  if (!requireKey(res)) return;
   const ids = (req.query.ids || "")
     .toString()
     .split(",")
@@ -603,31 +726,17 @@ app.get("/api/recipes", async (req, res) => {
     .filter(Boolean);
   if (!ids.length) return res.json({ recipes: [] });
 
-  const missing = [];
-  const recipes = {};
-  for (const id of ids) {
-    const c = cacheGet(`recipe:${id}`);
-    if (c) recipes[id] = c;
-    else missing.push(id);
-  }
+  const haveKey = Boolean(API_KEY && API_KEY !== "your_key_here");
+  const { recipes, apiError } = await resolveRecipes(ids, { allowFetch: haveKey });
+  const ordered = ids.map((id) => recipes[id]).filter(Boolean); // preserve requested order
 
-  try {
-    if (missing.length) {
-      const data = await spoonFetch("/recipes/informationBulk", {
-        ids: missing.join(","),
-        includeNutrition: "true",
-      });
-      for (const r of data) {
-        const clean = normalizeRecipe(r);
-        cacheSet(`recipe:${r.id}`, clean);
-        recipes[r.id] = clean;
-      }
-    }
-    // Preserve requested order.
-    res.json({ recipes: ids.map((id) => recipes[id]).filter(Boolean) });
-  } catch (e) {
-    res.status(e.status || 500).json({ error: friendlyError(e) });
-  }
+  // If we resolved anything from cache, serve it even when the live API failed —
+  // a saved recipe should never become unopenable just because quota ran out.
+  if (ordered.length) return res.json({ recipes: ordered, stale: Boolean(apiError) });
+
+  if (apiError) return res.status(apiError.status || 500).json({ error: friendlyError(apiError) });
+  if (!haveKey) return requireKey(res); // no key and nothing cached → friendly 503
+  res.json({ recipes: [] });
 });
 
 function nutrient(nutrition, name) {
@@ -720,4 +829,5 @@ app.listen(PORT, () => {
     console.log("  ⚠  No API key yet. Add SPOONACULAR_API_KEY to a .env file, then restart.\n");
   }
   migrateLegacyKeys();
+  loadPoolFromRedis(); // rehydrate the search-fallback pool after ephemeral-disk wipes
 });

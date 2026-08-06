@@ -8,6 +8,16 @@
 // ============================================================
 const CHANGELOG = [
   {
+    build: 4,
+    date: "August 5, 2026",
+    changes: [
+      "Fixed households leaking into each other: signing a different household into the same phone could show it another family's calendar and events. Households are now kept fully separate, and a phone no longer carries one household's data into the next login.",
+      "Cleanup: the calendars and other data that had leaked into the test/other households were wiped. Your own Andrew-&-Katie calendar, events and everything else are untouched.",
+      "Recipes saved to your meal plans now stay viewable even after the daily recipe limit is reached or the app restarts — the full ingredients and steps are cached for good.",
+      "You can now uncheck a chore on the Assigned board — tap a checked-off chore again to clear it.",
+    ],
+  },
+  {
     build: 3,
     date: "August 4, 2026",
     changes: [
@@ -445,6 +455,51 @@ async function initSync() {
     updateFavCount();
     updateNotesCount();
     renderPlanner();
+  } catch {
+    /* ignore */
+  }
+}
+
+// This browser stamps which household its cached (localStorage) data belongs to.
+// If a DIFFERENT household signs in here, the cached copies must be dropped
+// BEFORE initSync runs — otherwise the previous household's plan/events/etc. get
+// pushed up into the new household's (empty) server store, leaking data across
+// families. Wiping them lets server-wins repopulate the correct household.
+const HOUSEHOLD_OWNER_KEY = "homebase.householdOwner.v1";
+const SYNCED_KEYS = [
+  PLAN_KEY, FAV_KEY, SETTINGS_KEY, GROCERY_KEY, STORE_KEY,
+  NOTES_KEY, TODOS_KEY, EVENTS_KEY, TRACKER_KEY,
+];
+function guardHouseholdData() {
+  let owner = null;
+  try {
+    owner = localStorage.getItem(HOUSEHOLD_OWNER_KEY);
+  } catch {
+    /* storage unavailable — nothing to guard */
+  }
+  if (owner && owner !== household) {
+    // Different family on this device: clear the cached data and re-hydrate the
+    // in-memory copies from the now-empty store (each loader returns its default).
+    for (const k of SYNCED_KEYS) {
+      try {
+        localStorage.removeItem(k);
+      } catch {
+        /* ignore */
+      }
+    }
+    plan = loadPlan();
+    favorites = loadFavorites();
+    settings = loadSettings();
+    grocery = loadGrocery();
+    storeData = loadStore();
+    notes = loadNotes();
+    todos = loadTodos();
+    events = loadEvents();
+    tracker = loadTracker();
+    applyPeopleLabels();
+  }
+  try {
+    localStorage.setItem(HOUSEHOLD_OWNER_KEY, household);
   } catch {
     /* ignore */
   }
@@ -3725,6 +3780,13 @@ function decPersonDate(item, p, key) {
   else delete item.done[p][key];
   saveTracker();
 }
+// Clear a person's completions for a day outright (used to uncheck on the
+// Assigned board, where the control is a single checkbox rather than a counter).
+function clearPersonDate(item, p, key) {
+  if (!item.done || !item.done[p]) return;
+  delete item.done[p][key];
+  saveTracker();
+}
 // Tap = increment; press-and-hold or right-click = decrement (one action per gesture,
 // works with mouse and touch). Used for the A/K buttons and the history cells.
 function bindCount(el, onInc, onDec) {
@@ -4232,12 +4294,18 @@ function renderAssigned() {
         rowEl.className = "assigned-item" + (done ? " done" : "");
         const trail = [it.category, it.subcategory].filter(Boolean).join(" › ");
         rowEl.innerHTML = `
-          <button type="button" class="assigned-check${done ? " on" : ""}" style="${personStyle(pi)}" aria-label="Mark ${escapeHtml(it.name)} done">${done ? "✓" : ""}</button>
+          <button type="button" class="assigned-check${done ? " on" : ""}" style="${personStyle(pi)}" role="checkbox" aria-checked="${done}" aria-label="${done ? "Uncheck" : "Check off"} ${escapeHtml(it.name)}">${done ? "✓" : ""}</button>
           <span class="assigned-item-name">${escapeHtml(it.name)}${trail ? `<span class="assigned-item-cat">${escapeHtml(trail)}</span>` : ""}</span>
           ${n > 1 ? `<span class="assigned-item-n">${n}×</span>` : ""}`;
+        // Checkbox toggle: tap an unchecked chore to mark it done, tap a checked
+        // one to clear it (press-hold still removes a single completion).
         bindCount(
           rowEl.querySelector(".assigned-check"),
-          () => { incPersonDate(it, p, today); renderAssigned(); },
+          () => {
+            if (personCount(it, p, today) > 0) clearPersonDate(it, p, today);
+            else incPersonDate(it, p, today);
+            renderAssigned();
+          },
           () => { decPersonDate(it, p, today); renderAssigned(); }
         );
         card.appendChild(rowEl);
@@ -5040,6 +5108,7 @@ async function init() {
     if (!cfg.hasKey) $("#keyBanner").classList.remove("hidden");
     syncEnabled = Boolean(cfg.storage);
     household = cfg.household || "local";
+    guardHouseholdData(); // drop another household's cached data before it can sync up
     applyAccountInfo(cfg);
     renderCalendarIfActive(); // paint Katie's paydays once the household is known
     renderHomeIfActive();
