@@ -680,6 +680,7 @@ function activateTab(name, fromHistory = false) {
     .forEach((p) => p.classList.toggle("active", p.id === `tab-${name}`));
   if (isMeal) setMealView(name);
   if (name === "home") {
+    exitHomeEdit(); // always open Home in its normal (non-editing) state
     renderHome();
     refreshFromServer();
   }
@@ -3510,8 +3511,13 @@ function dashCard(title, onNav) {
     head.classList.add("dash-head-link");
     head.setAttribute("role", "link");
     head.setAttribute("tabindex", "0");
-    head.addEventListener("click", onNav);
+    // In Edit mode the heading is a drag/remove surface, not a shortcut.
+    const editing = () => $("#dashGrid")?.classList.contains("editing");
+    head.addEventListener("click", () => {
+      if (!editing()) onNav();
+    });
     head.addEventListener("keydown", (ev) => {
+      if (editing()) return;
       if (ev.key === "Enter" || ev.key === " ") {
         ev.preventDefault();
         onNav();
@@ -3566,173 +3572,318 @@ async function loadWeather(force) {
   return data;
 }
 
-function renderHome() {
-  const grid = $("#dashGrid");
-  if (!grid) return;
-  grid.innerHTML = "";
-  const todayKey = isoDate(new Date());
+// — Live weather (Open-Meteo; location set in Settings, defaults to Alton) —
+function buildWeatherCard() {
+  const card = dashCard("Weather", () => activateTab("settings"));
+  const body = card.querySelector(".dash-body");
+  const loc = weatherLoc();
+  const wx = document.createElement("div");
+  wx.className = "dash-weather";
+  wx.innerHTML = `<span class="wx-loading">Loading…</span>`;
+  body.appendChild(wx);
+  loadWeather()
+    .then((d) => {
+      const { icon, text } = describeWeather(d.code, d.isDay);
+      const s = d.soon;
+      const tag =
+        s && s.emoji && s.label
+          ? `<span class="wx-soon">${s.emoji} ${escapeHtml(s.label)} in ${s.hours} hr</span>`
+          : "";
+      wx.innerHTML =
+        `<span class="wx-icon" aria-hidden="true">${icon}</span>` +
+        `<span class="wx-temp">${Number.isFinite(d.temp) ? d.temp + "°" : "—"}</span>` +
+        `<span class="wx-cond">${escapeHtml(text)}</span>` +
+        tag +
+        `<span class="wx-place">${escapeHtml(loc.label || "")}</span>`;
+    })
+    .catch(() => {
+      wx.innerHTML = `<span class="wx-err">Weather unavailable right now.</span>`;
+    });
+  return card;
+}
+
+// — Grocery quick-add (items go straight to this week's list) —
+function buildGroceryCard() {
   const weekKey = weekKeyOf(new Date());
+  const card = dashCard("Grocery", () => activateTab("grocery"));
+  const body = card.querySelector(".dash-body");
+  const form = document.createElement("form");
+  form.className = "dash-add";
+  form.innerHTML =
+    `<input type="text" placeholder="Add to this week's list…" autocomplete="off" />` +
+    `<button type="submit">Add</button>`;
+  const input = form.querySelector("input");
+  form.addEventListener("submit", (ev) => {
+    ev.preventDefault();
+    const name = input.value.trim();
+    if (!addGroceryItem(name)) return;
+    toast(`Added “${name}” to this week's list`);
+    input.value = "";
+    if (groceryWeek === weekKey) renderGrocery(lastGroceryRecipes, weekKey);
+  });
+  body.appendChild(form);
+  return card;
+}
 
-  // — Live weather (Open-Meteo; location set in Settings, defaults to Alton) —
-  {
-    const card = dashCard("Weather", () => activateTab("settings"));
-    const body = card.querySelector(".dash-body");
-    const loc = weatherLoc();
-    const wx = document.createElement("div");
-    wx.className = "dash-weather";
-    wx.innerHTML = `<span class="wx-loading">Loading…</span>`;
-    body.appendChild(wx);
-    loadWeather()
-      .then((d) => {
-        const { icon, text } = describeWeather(d.code, d.isDay);
-        const s = d.soon;
-        const tag =
-          s && s.emoji && s.label
-            ? `<span class="wx-soon">${s.emoji} ${escapeHtml(s.label)} in ${s.hours} hr</span>`
-            : "";
-        wx.innerHTML =
-          `<span class="wx-icon" aria-hidden="true">${icon}</span>` +
-          `<span class="wx-temp">${Number.isFinite(d.temp) ? d.temp + "°" : "—"}</span>` +
-          `<span class="wx-cond">${escapeHtml(text)}</span>` +
-          tag +
-          `<span class="wx-place">${escapeHtml(loc.label || "")}</span>`;
-      })
-      .catch(() => {
-        wx.innerHTML = `<span class="wx-err">Weather unavailable right now.</span>`;
-      });
-    grid.appendChild(card);
-  }
-
-  // — Grocery quick-add (top of the screen; items go straight to this week) —
-  {
-    const card = dashCard("Grocery", () => activateTab("grocery"));
-    const body = card.querySelector(".dash-body");
-    const form = document.createElement("form");
-    form.className = "dash-add";
-    form.innerHTML =
-      `<input type="text" placeholder="Add to this week's list…" autocomplete="off" />` +
-      `<button type="submit">Add</button>`;
-    const input = form.querySelector("input");
-    form.addEventListener("submit", (ev) => {
-      ev.preventDefault();
-      const name = input.value.trim();
-      if (!addGroceryItem(name)) return;
-      toast(`Added “${name}” to this week's list`);
-      input.value = "";
-      if (groceryWeek === weekKey) renderGrocery(lastGroceryRecipes, weekKey);
-    });
-    body.appendChild(form);
-    grid.appendChild(card);
-  }
-
-  // — This week's recipes (from the Planner) —
+// — This week's recipes (from the Planner) —
+function buildRecipesCard() {
+  const weekKey = weekKeyOf(new Date());
   const dishes = weekDishes(weekKey);
-  {
-    const card = dashCard("Recipes", () => activateTab("plan"));
-    const body = card.querySelector(".dash-body");
-    if (!dishes.length) body.appendChild(dashEmpty("No dishes planned this week."));
-    else
-      dishes.forEach((r) => {
-        const row = document.createElement("div");
-        row.className = "dash-row recipe-row";
-        row.innerHTML = `<img src="${r.image || placeholder()}" alt="" loading="lazy" /><span class="dash-row-title">${escapeHtml(r.title)}</span>`;
-        const img = row.querySelector("img");
-        img.onerror = () => (img.src = placeholder());
-        row.addEventListener("click", () => showRecipe(r.id));
-        body.appendChild(row);
-      });
-    grid.appendChild(card);
-  }
-
-  // — Calendar events for the next 7 days (plus Katie's paydays) —
-  {
-    const card = dashCard("Calendar", () => activateTab("calendar"));
-    const body = card.querySelector(".dash-body");
-    // Merge real events and payday markers into one date-ordered list.
-    const rows = [];
-    for (let i = 0; i < 7; i++) {
-      const d = new Date();
-      d.setDate(d.getDate() + i);
-      const key = isoDate(d);
-      if (isKatiePayday(key)) rows.push({ key, payday: true });
-      eventsOnDay(key).forEach((e) => rows.push({ key, ev: e }));
-    }
-    if (!rows.length) body.appendChild(dashEmpty("Nothing scheduled in the next 7 days."));
-    else
-      rows.forEach(({ key, ev, payday }) => {
-        const row = document.createElement("div");
-        const dayTag = `<span class="dash-day">${dashDayLabel(key)}</span>`;
-        if (payday) {
-          row.className = "dash-row event-row-dash payday-row";
-          row.innerHTML =
-            dayTag +
-            `<span class="pay-ico">$</span>` +
-            `<span class="dash-row-title">${escapeHtml(paydayLabel())}</span>`;
-          row.addEventListener("click", () => openDayEditor(key));
-        } else {
-          row.className = "dash-row event-row-dash";
-          row.innerHTML =
-            dayTag +
-            `<span class="event-bubbles">${personBubbles(evPeople(ev))}</span>` +
-            (ev.time ? `<span class="dash-time">${fmtTime(ev.time)}</span>` : "") +
-            `<span class="dash-row-title">${ev.emoji ? `<span class="ev-emoji">${ev.emoji}</span>` : ""}${escapeHtml(ev.title)}</span>`;
-          row.addEventListener("click", () => openDayEditor(key));
-        }
-        body.appendChild(row);
-      });
-    grid.appendChild(card);
-  }
-
-  // — To-dos due in the next 7 days —
-  const dueTodos = todosDueNext7Days();
-  {
-    const card = dashCard("To-Do", () => {
-      notesSubView = "todo";
-      activateTab("notes");
+  const card = dashCard("Recipes", () => activateTab("plan"));
+  const body = card.querySelector(".dash-body");
+  if (!dishes.length) body.appendChild(dashEmpty("No dishes planned this week."));
+  else
+    dishes.forEach((r) => {
+      const row = document.createElement("div");
+      row.className = "dash-row recipe-row";
+      row.innerHTML = `<img src="${r.image || placeholder()}" alt="" loading="lazy" /><span class="dash-row-title">${escapeHtml(r.title)}</span>`;
+      const img = row.querySelector("img");
+      img.onerror = () => (img.src = placeholder());
+      row.addEventListener("click", () => showRecipe(r.id));
+      body.appendChild(row);
     });
-    const body = card.querySelector(".dash-body");
-    if (!dueTodos.length) body.appendChild(dashEmpty("Nothing due in the next 7 days."));
-    else
-      dueTodos.forEach((t) => {
-        const row = document.createElement("div");
-        row.className = "dash-row todo-row-dash" + (t.done ? " done" : "");
-        row.innerHTML =
-          `<span class="q-dot q${t.quadrant}"></span>` +
-          `<span class="dash-row-title">${escapeHtml(t.title)}</span>` +
-          `<span class="dash-due${isOverdue(t.due) && !t.done ? " overdue" : ""}">${fmtDue(t.due)}</span>`;
-        // Check the task off (by person / both) right here on the dashboard.
-        row.insertBefore(todoDoneControl(t), row.firstChild);
-        row.addEventListener("click", () => openTodoEditor(t.quadrant, t.id));
-        body.appendChild(row);
-      });
-    grid.appendChild(card);
-  }
+  return card;
+}
 
-  // — Chores completed today (a pip per completion, in each person's colour) —
+// — Calendar events for the next 7 days (plus Katie's paydays) —
+function buildCalendarCard() {
+  const card = dashCard("Calendar", () => activateTab("calendar"));
+  const body = card.querySelector(".dash-body");
+  // Merge real events and payday markers into one date-ordered list.
+  const rows = [];
+  for (let i = 0; i < 7; i++) {
+    const d = new Date();
+    d.setDate(d.getDate() + i);
+    const key = isoDate(d);
+    if (isKatiePayday(key)) rows.push({ key, payday: true });
+    eventsOnDay(key).forEach((e) => rows.push({ key, ev: e }));
+  }
+  if (!rows.length) body.appendChild(dashEmpty("Nothing scheduled in the next 7 days."));
+  else
+    rows.forEach(({ key, ev, payday }) => {
+      const row = document.createElement("div");
+      const dayTag = `<span class="dash-day">${dashDayLabel(key)}</span>`;
+      if (payday) {
+        row.className = "dash-row event-row-dash payday-row";
+        row.innerHTML =
+          dayTag +
+          `<span class="pay-ico">$</span>` +
+          `<span class="dash-row-title">${escapeHtml(paydayLabel())}</span>`;
+        row.addEventListener("click", () => openDayEditor(key));
+      } else {
+        row.className = "dash-row event-row-dash";
+        row.innerHTML =
+          dayTag +
+          `<span class="event-bubbles">${personBubbles(evPeople(ev))}</span>` +
+          (ev.time ? `<span class="dash-time">${fmtTime(ev.time)}</span>` : "") +
+          `<span class="dash-row-title">${ev.emoji ? `<span class="ev-emoji">${ev.emoji}</span>` : ""}${escapeHtml(ev.title)}</span>`;
+        row.addEventListener("click", () => openDayEditor(key));
+      }
+      body.appendChild(row);
+    });
+  return card;
+}
+
+// — To-dos due in the next 7 days —
+function buildTodoCard() {
+  const dueTodos = todosDueNext7Days();
+  const card = dashCard("To-Do", () => {
+    notesSubView = "todo";
+    activateTab("notes");
+  });
+  const body = card.querySelector(".dash-body");
+  if (!dueTodos.length) body.appendChild(dashEmpty("Nothing due in the next 7 days."));
+  else
+    dueTodos.forEach((t) => {
+      const row = document.createElement("div");
+      row.className = "dash-row todo-row-dash" + (t.done ? " done" : "");
+      row.innerHTML =
+        `<span class="q-dot q${t.quadrant}"></span>` +
+        `<span class="dash-row-title">${escapeHtml(t.title)}</span>` +
+        `<span class="dash-due${isOverdue(t.due) && !t.done ? " overdue" : ""}">${fmtDue(t.due)}</span>`;
+      // Check the task off (by person / both) right here on the dashboard.
+      row.insertBefore(todoDoneControl(t), row.firstChild);
+      row.addEventListener("click", () => openTodoEditor(t.quadrant, t.id));
+      body.appendChild(row);
+    });
+  return card;
+}
+
+// — Chores completed today (a pip per completion, in each person's colour) —
+function buildChoresCard() {
+  const todayKey = isoDate(new Date());
   const doneToday = tracker.items
     .map((it) => ({ it, counts: activePeople().map((i) => personCount(it, String(i), todayKey)) }))
     .filter((x) => x.counts.some((n) => n > 0));
-  {
-    const card = dashCard("Chores", () => activateTab("chores"));
-    const body = card.querySelector(".dash-body");
-    if (!doneToday.length) body.appendChild(dashEmpty("No chores logged today yet."));
-    else
-      doneToday.forEach(({ it, counts }) => {
-        const row = document.createElement("div");
-        row.className = "dash-row chore-row-dash";
-        row.innerHTML = `<span class="dash-row-title">${escapeHtml(it.name)}</span><span class="dash-pips">${pipBoxes(counts)}</span>`;
-        body.appendChild(row);
-      });
-    const totalDone = doneToday.reduce((n, x) => n + x.counts.reduce((a, b) => a + b, 0), 0);
-    if (totalDone) {
-      const total = document.createElement("div");
-      total.className = "dash-total";
-      total.textContent = `${totalDone} completed today`;
-      body.appendChild(total);
-    }
-    grid.appendChild(card);
+  const card = dashCard("Chores", () => activateTab("chores"));
+  const body = card.querySelector(".dash-body");
+  if (!doneToday.length) body.appendChild(dashEmpty("No chores logged today yet."));
+  else
+    doneToday.forEach(({ it, counts }) => {
+      const row = document.createElement("div");
+      row.className = "dash-row chore-row-dash";
+      row.innerHTML = `<span class="dash-row-title">${escapeHtml(it.name)}</span><span class="dash-pips">${pipBoxes(counts)}</span>`;
+      body.appendChild(row);
+    });
+  const totalDone = doneToday.reduce((n, x) => n + x.counts.reduce((a, b) => a + b, 0), 0);
+  if (totalDone) {
+    const total = document.createElement("div");
+    total.className = "dash-total";
+    total.textContent = `${totalDone} completed today`;
+    body.appendChild(total);
   }
+  return card;
 }
+
+// The dashboard cards, in their default order. Each has a stable `id` (used to
+// persist the user's chosen layout), a chip `emoji` for the "hidden cards" menu,
+// and a `build()` that returns the card element.
+const HOME_CARD_DEFS = [
+  { id: "weather", title: "Weather", emoji: "☀️", build: buildWeatherCard },
+  { id: "grocery", title: "Grocery", emoji: "🛒", build: buildGroceryCard },
+  { id: "recipes", title: "Recipes", emoji: "🍽️", build: buildRecipesCard },
+  { id: "calendar", title: "Calendar", emoji: "📅", build: buildCalendarCard },
+  { id: "todo", title: "To-Do", emoji: "✅", build: buildTodoCard },
+  { id: "chores", title: "Chores", emoji: "🧹", build: buildChoresCard },
+];
+const HOME_LAYOUT_KEY = "homebase.homeLayout.v1";
+
+// The saved Home layout: `order` = visible card ids in display order, `hidden` =
+// tucked-away card ids. Any card not listed anywhere defaults to visible (so new
+// cards shipped in a later build show up automatically), and a card can never be
+// in both lists.
+function getHomeLayout() {
+  let raw = null;
+  try {
+    raw = JSON.parse(localStorage.getItem(HOME_LAYOUT_KEY));
+  } catch {
+    /* ignore */
+  }
+  const known = HOME_CARD_DEFS.map((d) => d.id);
+  const order = Array.isArray(raw?.order) ? raw.order.filter((id) => known.includes(id)) : [];
+  let hidden = Array.isArray(raw?.hidden) ? raw.hidden.filter((id) => known.includes(id)) : [];
+  hidden = hidden.filter((id) => !order.includes(id));
+  known.forEach((id) => {
+    if (!order.includes(id) && !hidden.includes(id)) order.push(id);
+  });
+  return { order: [...new Set(order)], hidden: [...new Set(hidden)] };
+}
+function saveHomeLayout(layout) {
+  localStorage.setItem(HOME_LAYOUT_KEY, JSON.stringify({ order: layout.order, hidden: layout.hidden }));
+}
+// Persist a new visible order after a drag (the DOM is already reordered).
+function homeReorder(keys) {
+  const known = HOME_CARD_DEFS.map((d) => d.id);
+  const layout = getHomeLayout();
+  layout.order = keys.filter((id) => known.includes(id));
+  saveHomeLayout(layout);
+}
+function homeHideCard(id) {
+  const layout = getHomeLayout();
+  layout.order = layout.order.filter((x) => x !== id);
+  if (!layout.hidden.includes(id)) layout.hidden.push(id);
+  saveHomeLayout(layout);
+  renderHome();
+}
+function homeShowCard(id) {
+  const layout = getHomeLayout();
+  layout.hidden = layout.hidden.filter((x) => x !== id);
+  if (!layout.order.includes(id)) layout.order.push(id);
+  saveHomeLayout(layout);
+  renderHome();
+}
+
+// In Edit mode, give a card a drag handle (reorder) and a ✕ (tuck it away).
+function decorateHomeEditCard(card, def) {
+  const head = card.querySelector(".dash-head");
+  const handle = dragHandle("Drag to reorder card");
+  head.insertBefore(handle, head.firstChild);
+  const rm = document.createElement("button");
+  rm.type = "button";
+  rm.className = "dash-card-remove";
+  rm.title = `Remove ${def.title} card`;
+  rm.setAttribute("aria-label", rm.title);
+  rm.textContent = "✕";
+  rm.addEventListener("click", (e) => {
+    e.stopPropagation();
+    homeHideCard(def.id);
+  });
+  head.appendChild(rm);
+  bindDragSort(card, handle, ".dash-card", (keys) => homeReorder(keys));
+}
+
+// The "hidden cards" tray at the bottom of Home — only shown in Edit mode. Each
+// tucked-away card is a chip that adds it back when tapped.
+function renderHomeHiddenMenu(layout, editing) {
+  const menu = $("#homeHiddenMenu");
+  if (!menu) return;
+  menu.classList.toggle("hidden", !editing);
+  menu.innerHTML = "";
+  if (!editing) return;
+  const label = document.createElement("div");
+  label.className = "home-hidden-label";
+  label.textContent = "Hidden cards";
+  menu.appendChild(label);
+  const hidden = layout.hidden.map((id) => HOME_CARD_DEFS.find((d) => d.id === id)).filter(Boolean);
+  if (!hidden.length) {
+    const empty = document.createElement("div");
+    empty.className = "home-hidden-empty";
+    empty.textContent = "All cards are on your Home screen. Tap ✕ on a card to tuck it here.";
+    menu.appendChild(empty);
+    return;
+  }
+  const chips = document.createElement("div");
+  chips.className = "home-hidden-chips";
+  hidden.forEach((def) => {
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "home-hidden-chip";
+    chip.innerHTML = `<span class="hh-emoji" aria-hidden="true">${def.emoji}</span>${escapeHtml(def.title)}<span class="hh-plus" aria-hidden="true">＋</span>`;
+    chip.addEventListener("click", () => homeShowCard(def.id));
+    chips.appendChild(chip);
+  });
+  menu.appendChild(chips);
+}
+
+function renderHome() {
+  const grid = $("#dashGrid");
+  if (!grid) return;
+  const editing = grid.classList.contains("editing");
+  grid.innerHTML = "";
+  const layout = getHomeLayout();
+  layout.order.forEach((id) => {
+    const def = HOME_CARD_DEFS.find((d) => d.id === id);
+    if (!def) return;
+    const card = def.build();
+    card.dataset.dragkey = id;
+    if (editing) decorateHomeEditCard(card, def);
+    grid.appendChild(card);
+  });
+  renderHomeHiddenMenu(layout, editing);
+}
+
+// Edit mode is a temporary state on the dashboard (like the chores checklist):
+// while it's on, cards gain a drag handle + ✕ and the hidden-cards tray appears.
+function updateHomeEditButton() {
+  const btn = $(".home-edit");
+  if (!btn) return;
+  const editing = $("#dashGrid").classList.contains("editing");
+  btn.classList.toggle("on", editing);
+  const label = btn.querySelector("span");
+  if (label) label.textContent = editing ? "Done" : "Edit";
+}
+function exitHomeEdit() {
+  const grid = $("#dashGrid");
+  if (grid) grid.classList.remove("editing");
+  updateHomeEditButton();
+}
+$(".home-edit")?.addEventListener("click", () => {
+  const grid = $("#dashGrid");
+  if (!grid) return;
+  grid.classList.toggle("editing", !grid.classList.contains("editing"));
+  updateHomeEditButton();
+  renderHome();
+});
 
 // ============================================================
 //  Chores & habits (daily checklist, per-person, with streaks)
