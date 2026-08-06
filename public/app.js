@@ -8,6 +8,14 @@
 // ============================================================
 const CHANGELOG = [
   {
+    build: 6,
+    date: "August 5, 2026",
+    changes: [
+      "You can now rearrange the Home screen. Tap Edit (next to Settings) to drag cards into the order you like, and tap the ✕ to tuck a card you don't need out of the way.",
+      "Hidden cards wait in a little tray at the bottom while editing — tap one to bring it back. Your layout is remembered on each device.",
+    ],
+  },
+  {
     build: 5,
     date: "August 5, 2026",
     changes: [
