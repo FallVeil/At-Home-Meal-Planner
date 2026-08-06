@@ -466,11 +466,14 @@ async function initSync() {
 // pushed up into the new household's (empty) server store, leaking data across
 // families. Wiping them lets server-wins repopulate the correct household.
 const HOUSEHOLD_OWNER_KEY = "homebase.householdOwner.v1";
-const SYNCED_KEYS = [
-  PLAN_KEY, FAV_KEY, SETTINGS_KEY, GROCERY_KEY, STORE_KEY,
-  NOTES_KEY, TODOS_KEY, EVENTS_KEY, TRACKER_KEY,
-];
 function guardHouseholdData() {
+  // Built here (not at module scope) because several of these key constants are
+  // declared further down the file — referencing them up here would hit the
+  // temporal dead zone and throw at load. By call time they're all initialized.
+  const SYNCED_KEYS = [
+    PLAN_KEY, FAV_KEY, SETTINGS_KEY, GROCERY_KEY, STORE_KEY,
+    NOTES_KEY, TODOS_KEY, EVENTS_KEY, TRACKER_KEY,
+  ];
   let owner = null;
   try {
     owner = localStorage.getItem(HOUSEHOLD_OWNER_KEY);
