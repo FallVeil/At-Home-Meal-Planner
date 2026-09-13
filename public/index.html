@@ -214,6 +214,45 @@
               placeholder="Add an item… e.g. milk, paper towels"
               autocomplete="off"
             />
+            <input
+              id="addItemQty"
+              class="add-item-qty"
+              type="text"
+              inputmode="decimal"
+              placeholder="Qty"
+              autocomplete="off"
+              aria-label="Quantity (optional)"
+            />
+            <input
+              id="addItemUnit"
+              class="add-item-unit"
+              type="text"
+              list="unitOptions"
+              placeholder="Unit"
+              autocomplete="off"
+              aria-label="Unit (optional)"
+            />
+            <datalist id="unitOptions">
+              <option value="g"></option>
+              <option value="kg"></option>
+              <option value="oz"></option>
+              <option value="lb"></option>
+              <option value="ml"></option>
+              <option value="L"></option>
+              <option value="cup"></option>
+              <option value="tbsp"></option>
+              <option value="tsp"></option>
+              <option value="can"></option>
+              <option value="jar"></option>
+              <option value="pkg"></option>
+              <option value="bag"></option>
+              <option value="box"></option>
+              <option value="bunch"></option>
+              <option value="dozen"></option>
+              <option value="clove"></option>
+              <option value="loaf"></option>
+              <option value="bottle"></option>
+            </datalist>
             <button type="submit">Add</button>
           </form>
         </div>

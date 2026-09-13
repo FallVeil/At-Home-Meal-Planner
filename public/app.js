@@ -8,6 +8,13 @@
 // ============================================================
 const CHANGELOG = [
   {
+    build: 9,
+    date: "September 13, 2026",
+    changes: [
+      "When you add your own grocery item, there are now little Qty and Unit boxes next to it — so you can jot “2 bottle olive oil” or “½ dozen eggs”, not just the name. Both are optional, and the unit box suggests common ones (cup, tbsp, lb, can…) as you type.",
+    ],
+  },
+  {
     build: 8,
     date: "September 13, 2026",
     changes: [
@@ -1853,9 +1860,10 @@ function extraRow(extra, originWeek, carried) {
   const row = document.createElement("div");
   row.className = "grocery-item" + (extra.checked ? " checked" : "");
   const id = "ex-" + extra.id;
+  const qty = formatQty(extra.amount, extra.unit);
   row.innerHTML = `
     <input type="checkbox" id="${id}" ${extra.checked ? "checked" : ""} />
-    <label for="${id}">${escapeHtml(capitalize(extra.name))}</label>
+    <label for="${id}"><span class="qty">${qty ? escapeHtml(qty) + " " : ""}</span>${escapeHtml(capitalize(extra.name))}</label>
     <span class="added-badge${carried ? " carried" : ""}">${carried ? "carried over" : "added"}</span>`;
   row.querySelector("input").addEventListener("change", (e) => {
     extra.checked = e.target.checked;
@@ -1892,24 +1900,51 @@ function extraRow(extra, originWeek, carried) {
 // Add-your-own-item + hide-staples controls.
 // Manual grocery items always land in THIS week's list (from the grocery page
 // or the Home quick-add card), so nothing gets stranded on a future week.
-function addGroceryItem(name) {
+// Parse a user-typed quantity: plain decimals ("2", "1.5"), simple fractions
+// ("1/2") and mixed numbers ("1 1/2"). Returns a positive number, or null.
+function parseQtyInput(str) {
+  const s = (str || "").trim();
+  if (!s) return null;
+  const mixed = s.match(/^(\d+)\s+(\d+)\/(\d+)$/);
+  if (mixed) {
+    const [, whole, num, den] = mixed.map(Number);
+    return den ? whole + num / den : null;
+  }
+  const frac = s.match(/^(\d+)\/(\d+)$/);
+  if (frac) {
+    const [, num, den] = frac.map(Number);
+    return den ? num / den : null;
+  }
+  const n = parseFloat(s);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+function addGroceryItem(name, amount, unit) {
   name = (name || "").trim();
   if (!name) return false;
   const wk = weekKeyOf(new Date());
-  weekGrocery(wk).extras.push({
+  const item = {
     id: Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
     name,
     checked: false,
     aisle: categorizeItem(name),
-  });
+  };
+  if (amount != null && amount > 0) item.amount = amount;
+  const u = (unit || "").trim();
+  if (u) item.unit = u;
+  weekGrocery(wk).extras.push(item);
   saveGrocery();
   return true;
 }
 $("#addItemForm").addEventListener("submit", (e) => {
   e.preventDefault();
   const input = $("#addItemInput");
-  if (!addGroceryItem(input.value)) return;
+  const qtyInput = $("#addItemQty");
+  const unitInput = $("#addItemUnit");
+  if (!addGroceryItem(input.value, parseQtyInput(qtyInput.value), unitInput.value)) return;
   input.value = "";
+  qtyInput.value = "";
+  unitInput.value = "";
   const wk = weekKeyOf(new Date());
   // Show this week so the new item is visible (jump there if viewing another week).
   if (groceryWeek === wk) renderGrocery(lastGroceryRecipes, wk);

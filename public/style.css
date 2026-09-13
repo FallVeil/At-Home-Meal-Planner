@@ -855,7 +855,7 @@ button { font-family: inherit; }
   flex-wrap: wrap;
   margin-bottom: 18px;
 }
-.add-item { display: flex; gap: 8px; flex: 1 1 260px; }
+.add-item { display: flex; gap: 8px; flex: 1 1 260px; flex-wrap: wrap; }
 .add-item input {
   flex: 1;
   padding: 10px 12px;
@@ -865,6 +865,12 @@ button { font-family: inherit; }
   color: var(--ink);
   font-size: 16px;
 }
+/* Optional quantity + unit fields tucked at the end of the add-item row.
+   Fixed narrow widths so the item name keeps most of the space; they wrap
+   below on a phone. */
+.add-item input#addItemInput { flex: 1 1 150px; }
+.add-item .add-item-qty { flex: 0 0 58px; min-width: 0; }
+.add-item .add-item-unit { flex: 0 0 88px; min-width: 0; }
 .add-item input::placeholder { color: var(--muted); }
 .add-item input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
 .add-item button {
