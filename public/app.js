@@ -8,6 +8,14 @@
 // ============================================================
 const CHANGELOG = [
   {
+    build: 8,
+    date: "September 13, 2026",
+    changes: [
+      "Calendar events can now have a description. When you add or edit an event, there's a spot for extra details (address, what to bring, a note) that shows under the event on its day.",
+      "Grocery lists are tidier: the same ingredient from different recipes now stacks onto one line even when the recipes spell it a little differently (“eggs” and “egg”, “chopped onions” and “onion”), so you're not scrolling past duplicates.",
+    ],
+  },
+  {
     build: 7,
     date: "August 5, 2026",
     changes: [
@@ -1606,19 +1614,54 @@ function finishAislePrompt(save) {
   if (groceryWeek) renderGrocery(lastGroceryRecipes, groceryWeek);
 }
 
+// Prep words that describe how an ingredient is cut/prepared but never change
+// which product you buy — safe to drop when merging. Descriptive words that DO
+// change the product (colors, "green"/"red", "dried", "fresh", "ground",
+// "boneless"…) are deliberately NOT here, so distinct items stay separate.
+const GROCERY_PREP_WORDS = new Set([
+  "chopped", "diced", "minced", "sliced", "grated", "shredded", "crushed",
+  "cubed", "halved", "quartered", "peeled", "seeded", "trimmed", "cooked",
+  "uncooked", "finely", "roughly", "thinly", "freshly", "large", "medium", "small",
+]);
+function singularizeWord(w) {
+  if (w.length <= 3 || w.endsWith("ss")) return w;
+  if (w.endsWith("ies")) return w.slice(0, -3) + "y";
+  if (/(ches|shes|xes|zes|oes)$/.test(w)) return w.slice(0, -2);
+  if (w.endsWith("s")) return w.slice(0, -1);
+  return w;
+}
+// Merge key for grocery items: strips punctuation/quantities, drops pure prep
+// words, and singularizes the head noun so "eggs" and "1 egg", or "chopped
+// onions" and "onion", collapse onto one line. Display still uses the original
+// name; this only decides what stacks together.
+function normGroceryName(name) {
+  const cleaned = (name || "")
+    .toLowerCase()
+    .replace(/\([^)]*\)/g, " ") // drop parenthetical notes
+    .replace(/[^a-z\s-]/g, " ") // strip digits/punctuation
+    .replace(/\s+/g, " ")
+    .trim();
+  const words = cleaned.split(" ").filter((w) => w && !GROCERY_PREP_WORDS.has(w));
+  if (!words.length) return cleaned;
+  words[words.length - 1] = singularizeWord(words[words.length - 1]);
+  return words.join(" ");
+}
+
 function renderGrocery(recipes, weekKey) {
   lastGroceryRecipes = recipes;
   groceryWeek = weekKey;
   const wk = weekGrocery(weekKey);
 
-  // Combine all ingredients by name + unit.
+  // Combine all ingredients into one line per item. The merge key normalizes
+  // trivial variants (plural↔singular, prep words) so the same thing across
+  // recipes stacks up instead of repeating — see normGroceryName().
   const combined = new Map();
   recipes.forEach((recipe) => {
     (recipe.ingredients || []).forEach((ing) => {
       const name = (ing.name || "").trim();
       if (!name) return;
       const unit = (ing.unit || "").trim().toLowerCase();
-      const key = `${name.toLowerCase()}|${unit}`;
+      const key = `${normGroceryName(name)}|${unit}`;
       if (!combined.has(key)) {
         combined.set(key, { key, name, unit, amount: 0, aisle: ing.aisle || "Other", usedIn: new Set() });
       }
@@ -3355,9 +3398,11 @@ function renderDayEvents() {
       <span class="event-bubbles">${personBubbles(evPeople(e))}</span>
       ${e.time ? `<span class="event-time">${fmtTime(e.time)}</span>` : ""}
       <span class="event-title">${e.emoji ? `<span class="ev-emoji">${e.emoji}</span>` : ""}${escapeHtml(e.title)}${rep ? `<span class="event-repeat">↻ ${escapeHtml(rep)}</span>` : ""}</span>
-      <button class="event-del" aria-label="Delete event">✕</button>`;
+      <button class="event-del" aria-label="Delete event">✕</button>
+      ${e.desc ? `<div class="event-desc">${escapeHtml(e.desc)}</div>` : ""}`;
     row.querySelector(".event-title").addEventListener("click", () => startEditEvent(e));
     row.querySelector(".event-bubbles").addEventListener("click", () => startEditEvent(e));
+    row.querySelector(".event-desc")?.addEventListener("click", () => startEditEvent(e));
     row.querySelector(".event-del").addEventListener("click", (ev) => {
       ev.stopPropagation();
       if (e.repeat && e.repeat !== "none" &&
@@ -3390,6 +3435,7 @@ function startEditEvent(e) {
   editingEventId = e.id;
   setEventPeople(evPeople(e));
   $("#addEventTitle").value = e.title;
+  $("#addEventDesc").value = e.desc || "";
   setEventTime(e.time || "");
   initRepeatForForm(e.date, e); // presets read from the event's start date
   setEventEmoji(e.emoji || "");
@@ -3402,6 +3448,7 @@ function resetEventForm() {
   editingEventId = null;
   setEventPeople(["0"]);
   $("#addEventTitle").value = "";
+  $("#addEventDesc").value = "";
   setEventTime("");
   initRepeatForForm(dayEditorDate, null);
   setEventEmoji("");
@@ -3448,6 +3495,7 @@ $("#addEventForm").addEventListener("submit", (e) => {
   const title = $("#addEventTitle").value.trim();
   if (!title || !dayEditorDate) return;
   const time = getEventTime();
+  const desc = $("#addEventDesc").value.trim();
   const { recur } = getEventRepeat();
   const emoji = getEventEmoji();
   if (editingEventId) {
@@ -3457,6 +3505,8 @@ $("#addEventForm").addEventListener("submit", (e) => {
       ev.people = [...eventPeople];
       delete ev.person; // drop the legacy single-person field
       ev.time = time;
+      if (desc) ev.desc = desc;
+      else delete ev.desc;
       ev.recur = recur; // the new recurrence model
       delete ev.repeat; // drop legacy fields so occursOn uses `recur`
       delete ev.days;
@@ -3469,6 +3519,7 @@ $("#addEventForm").addEventListener("submit", (e) => {
       title,
       people: [...eventPeople],
       time,
+      ...(desc ? { desc } : {}),
       recur,
       emoji,
     });

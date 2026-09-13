@@ -1610,6 +1610,7 @@ button { font-family: inherit; }
 .event-row {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 10px;
   padding: 10px 12px;
   margin-bottom: 8px;
@@ -1617,6 +1618,17 @@ button { font-family: inherit; }
   border: 1px solid var(--line);
   border-radius: 10px;
   box-shadow: var(--shadow);
+}
+/* Optional event note — drops to its own line beneath the title. */
+.event-desc {
+  flex-basis: 100%;
+  margin: -2px 0 0 34px;
+  font-size: 0.8rem;
+  color: var(--muted);
+  line-height: 1.35;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  cursor: pointer;
 }
 .event-row.editing { border-color: var(--accent); }
 .event-bubbles { display: inline-flex; gap: 3px; flex: none; cursor: pointer; }
@@ -1654,6 +1666,22 @@ button { font-family: inherit; }
   font-size: 16px;
 }
 .event-fields input[type="text"]::placeholder { color: var(--muted); }
+/* Optional multi-line description field in the add/edit event form. */
+.event-desc-row { display: flex; }
+.event-desc-input {
+  flex: 1;
+  min-width: 0;
+  padding: 10px 13px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--card);
+  color: var(--ink);
+  font: inherit;
+  font-size: 16px;
+  resize: vertical;
+}
+.event-desc-input::placeholder { color: var(--muted); }
+.event-desc-input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
 .event-fields input:focus,
 .event-fields select:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
 .event-fields button {
