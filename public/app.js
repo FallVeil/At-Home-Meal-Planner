@@ -8,6 +8,13 @@
 // ============================================================
 const CHANGELOG = [
   {
+    build: 12,
+    date: "September 13, 2026",
+    changes: [
+      "Importing from a screenshot now handles long recipes that span more than one image — add all the screenshots at once (ingredients on one, steps on another, in any order) and they're stitched into a single recipe.",
+    ],
+  },
+  {
     build: 11,
     date: "September 13, 2026",
     changes: [
@@ -5498,20 +5505,29 @@ async function doImport(endpoint, body, loadingMsg) {
   }
 }
 
-async function importImageFile(file) {
-  if (!file || !file.type.startsWith("image/")) {
+// One or several images. Multiple images are treated as pages of one recipe —
+// the server hands them all to Claude, which merges and orders them.
+async function importImageFiles(fileList) {
+  const files = [...(fileList || [])].filter((f) => f.type.startsWith("image/")).slice(0, 6);
+  if (!files.length) {
     setImportStatus("error", "That doesn't look like an image.");
     return;
   }
-  setImportStatus("loading", "Reading your screenshot…");
-  let shot;
+  const many = files.length > 1;
+  setImportStatus("loading", many ? `Reading ${files.length} images…` : "Reading your screenshot…");
+  let images;
   try {
-    shot = await fileToDownscaledBase64(file);
+    images = await Promise.all(
+      files.map(async (f) => {
+        const s = await fileToDownscaledBase64(f);
+        return { image: s.base64, mediaType: s.mediaType };
+      })
+    );
   } catch {
-    setImportStatus("error", "Couldn't read that image.");
+    setImportStatus("error", "Couldn't read those images.");
     return;
   }
-  await doImport("/api/import/image", { image: shot.base64, mediaType: shot.mediaType }, "Reading your screenshot…");
+  await doImport("/api/import/image", { images }, many ? "Combining the pages…" : "Reading your screenshot…");
 }
 
 // A freshly imported recipe drops in as a card at the top of the results, with
@@ -5543,15 +5559,17 @@ $("#importUrlForm")?.addEventListener("submit", (e) => {
   if (url) doImport("/api/import/url", { url }, "Fetching the recipe…");
 });
 $("#importFileInput")?.addEventListener("change", (e) => {
-  const f = e.target.files && e.target.files[0];
-  e.target.value = ""; // let the same file be re-picked later
-  if (f) importImageFile(f);
+  const list = e.target.files ? [...e.target.files] : [];
+  e.target.value = ""; // let the same file(s) be re-picked later
+  if (list.length) importImageFiles(list);
 });
-// Paste a screenshot straight into the importer (desktop).
+// Paste one or more screenshots straight into the importer (desktop).
 $("#importModal")?.addEventListener("paste", (e) => {
-  const item = [...(e.clipboardData?.items || [])].find((i) => i.type.startsWith("image/"));
-  const f = item && item.getAsFile();
-  if (f) importImageFile(f);
+  const imgs = [...(e.clipboardData?.items || [])]
+    .filter((i) => i.type.startsWith("image/"))
+    .map((i) => i.getAsFile())
+    .filter(Boolean);
+  if (imgs.length) importImageFiles(imgs);
 });
 
 // ---- "What's new" changelog -------------------------------------------------

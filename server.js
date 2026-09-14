@@ -93,7 +93,7 @@ const LOW_ACID_EXCLUDE = [
   "ketchup", "mustard", "pineapple", "soda", "cola",
 ].join(",");
 
-app.use(express.json({ limit: "6mb" })); // headroom for base64 recipe screenshots
+app.use(express.json({ limit: "12mb" })); // headroom for several base64 recipe screenshots
 
 // ---------------------------------------------------------------------------
 //  Household passcode gate
@@ -929,19 +929,22 @@ async function fetchRecipePage(href) {
   return { text, image };
 }
 
-async function parseRecipeWithClaude({ text, imageBase64, imageMediaType, sourceUrl }) {
+async function parseRecipeWithClaude({ text, images, sourceUrl }) {
   const content = [];
-  if (imageBase64) {
+  (images || []).forEach((img) => {
     content.push({
       type: "image",
-      source: { type: "base64", media_type: imageMediaType || "image/jpeg", data: imageBase64 },
+      source: { type: "base64", media_type: img.mediaType || "image/jpeg", data: img.data },
     });
-  }
+  });
+  const n = (images || []).length;
   content.push({
     type: "text",
     text: text
       ? `Extract the recipe from this web page${sourceUrl ? ` (${sourceUrl})` : ""}:\n\n${text}`
-      : "Extract the recipe shown in this image.",
+      : n > 1
+        ? `These ${n} images are parts of ONE recipe, and may be out of order. Combine them into a single recipe, merging the ingredients and putting the steps in the correct order.`
+        : "Extract the recipe shown in this image.",
   });
   const msg = await anthropic.messages.create({
     model: IMPORT_MODEL,
@@ -1041,14 +1044,30 @@ const IMPORT_IMG_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "imag
 app.post("/api/import/image", async (req, res) => {
   if (!requireAnthropic(res)) return;
   const body = req.body || {};
-  const image = typeof body.image === "string" ? body.image.replace(/^data:[^,]+,/, "") : "";
-  if (!image) return res.status(400).json({ error: "No image was received." });
-  if (image.length > 7_500_000) return res.status(413).json({ error: "That image is too large — try a smaller screenshot." });
-  const mediaType = IMPORT_IMG_TYPES.has(body.mediaType) ? body.mediaType : "image/jpeg";
+  // Accept a single `image` (base64) or an `images` array for a multi-page
+  // recipe (several screenshots of one recipe, possibly out of order).
+  const rawList = Array.isArray(body.images)
+    ? body.images
+    : body.image
+      ? [{ image: body.image, mediaType: body.mediaType }]
+      : [];
+  const images = rawList
+    .map((x) => {
+      const src = typeof (x.image || x.data) === "string" ? (x.image || x.data) : "";
+      return {
+        data: src.replace(/^data:[^,]+,/, ""),
+        mediaType: IMPORT_IMG_TYPES.has(x.mediaType) ? x.mediaType : "image/jpeg",
+      };
+    })
+    .filter((x) => x.data);
+  if (!images.length) return res.status(400).json({ error: "No image was received." });
+  if (images.length > 6) return res.status(413).json({ error: "Please use at most 6 images for one recipe." });
+  const totalBytes = images.reduce((sum, x) => sum + x.data.length, 0);
+  if (totalBytes > 11_000_000) return res.status(413).json({ error: "Those images are too large — try fewer or smaller ones." });
   try {
-    const parsed = await parseRecipeWithClaude({ imageBase64: image, imageMediaType: mediaType });
+    const parsed = await parseRecipeWithClaude({ images });
     if (parsed.error) {
-      return res.status(422).json({ error: "Couldn't find a recipe in that image." });
+      return res.status(422).json({ error: "Couldn't find a recipe in those images." });
     }
     const { summary, recipe } = await finishImportedRecipe(parsed, {});
     res.json({ summary, recipe });

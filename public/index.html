@@ -435,7 +435,7 @@
       <div class="modal-card import-card">
         <button id="importClose" class="modal-close">✕</button>
         <h2>Import a recipe</h2>
-        <p class="import-sub">Paste a recipe link, or add a screenshot of one. We'll pull out the ingredients and steps and add it as a recipe you can plan.</p>
+        <p class="import-sub">Paste a recipe link, or add a screenshot of one (or several, for a long recipe). We'll pull out the ingredients and steps and add it as a recipe you can plan.</p>
 
         <form id="importUrlForm" class="import-url">
           <input id="importUrlInput" type="url" inputmode="url" autocomplete="off"
@@ -446,10 +446,10 @@
         <div class="import-or"><span>or</span></div>
 
         <label for="importFileInput" class="import-drop" id="importDrop">
-          <input id="importFileInput" type="file" accept="image/*" hidden />
+          <input id="importFileInput" type="file" accept="image/*" multiple hidden />
           <span class="import-drop-ico" aria-hidden="true">📷</span>
-          <span class="import-drop-text">Add a screenshot or photo</span>
-          <span class="import-drop-hint">Tap to choose, or paste an image</span>
+          <span class="import-drop-text">Add screenshots or photos</span>
+          <span class="import-drop-hint">Tap to choose — add several for a long recipe</span>
         </label>
 
         <div id="importStatus" class="import-status hidden"></div>
