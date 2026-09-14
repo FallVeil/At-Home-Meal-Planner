@@ -4,6 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
+import Anthropic from "@anthropic-ai/sdk";
 
 dotenv.config();
 
@@ -12,6 +13,13 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const API_KEY = process.env.SPOONACULAR_API_KEY;
 const SPOON = "https://api.spoonacular.com";
+
+// Optional Claude-powered recipe import (from a link or a screenshot). When
+// ANTHROPIC_API_KEY isn't set the import endpoints return a friendly 503 and the
+// UI hides the Import button — everything else works exactly the same.
+const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
+const IMPORT_MODEL = "claude-haiku-4-5"; // cheap + plenty capable for structuring a recipe
+const anthropic = ANTHROPIC_API_KEY ? new Anthropic({ apiKey: ANTHROPIC_API_KEY }) : null;
 
 // Optional shared storage (Upstash Redis REST) so the plan + favorites sync
 // across devices. If these env vars aren't set, the app falls back to
@@ -85,7 +93,7 @@ const LOW_ACID_EXCLUDE = [
   "ketchup", "mustard", "pineapple", "soda", "cola",
 ].join(",");
 
-app.use(express.json());
+app.use(express.json({ limit: "6mb" })); // headroom for base64 recipe screenshots
 
 // ---------------------------------------------------------------------------
 //  Household passcode gate
@@ -373,10 +381,13 @@ async function resolveRecipes(ids, { allowFetch = true } = {}) {
   }
   let apiError = null;
   let fetched = 0;
-  if (missing.length && allowFetch) {
+  // Only numeric ids come from Spoonacular; imported recipes (imp_*) live purely
+  // in our cache/Redis, so never send them to the upstream bulk lookup.
+  const fetchable = missing.filter((id) => /^\d+$/.test(String(id)));
+  if (fetchable.length && allowFetch) {
     try {
       const data = await spoonFetch("/recipes/informationBulk", {
-        ids: missing.join(","),
+        ids: fetchable.join(","),
         includeNutrition: "true",
       });
       for (const r of data) {
@@ -461,6 +472,7 @@ app.get("/api/config", (req, res) => {
   res.json({
     hasKey: Boolean(API_KEY && API_KEY !== "your_key_here"),
     storage: storageEnabled,
+    importEnabled: Boolean(anthropic), // whether Claude recipe import is configured
     household: req.householdId, // which household this session belongs to
     authOn: AUTH_ON, // whether the passcode gate is active
   });
@@ -736,6 +748,292 @@ app.put("/api/store", async (req, res) => {
     res.json({ ok: true });
   } catch {
     res.status(502).json({ error: "Could not save the store layout." });
+  }
+});
+
+// ===========================================================================
+//  Recipe import (Claude) — turn a link or a screenshot into a real recipe
+//  that flows through the normal card → plan → grocery-list machinery.
+// ===========================================================================
+
+// The grocery aisles the client groups by (must match AISLE_RULES in app.js so
+// imported ingredients slot into the same sections). Claude picks one per item.
+const IMPORT_AISLES = [
+  "Produce", "Meat", "Seafood", "Cheese", "Milk, Eggs, Other Dairy",
+  "Bakery/Bread", "Frozen", "Pasta and Rice", "Baking", "Cereal",
+  "Canned and Jarred", "Condiments", "Oil, Vinegar, Salad Dressing",
+  "Spices and Seasonings", "Nut butters, Jams, and Honey", "Beverages",
+  "Alcoholic Beverages", "Savory Snacks", "Sweet Snacks", "Nuts",
+  "Household", "Other",
+];
+
+const IMPORT_SYSTEM = `You extract a single cooking recipe from the text or image a user provides and return it as strict JSON.
+
+Respond with ONLY a JSON object — no markdown, no code fences, no commentary. Use exactly this shape:
+{
+  "title": string,
+  "image": string | null,          // an image URL if one is clearly present in the source, else null
+  "readyInMinutes": integer | null, // total time in minutes if stated
+  "servings": integer | null,
+  "ingredients": [
+    { "name": string,               // the shopping item, singular and lowercase (e.g. "chicken breast", "yellow onion")
+      "amount": number | null,      // numeric quantity; convert fractions like 1/2 to 0.5; null if none
+      "unit": string,               // e.g. "cup", "tbsp", "clove", "" if none
+      "aisle": string }             // MUST be one of: ${IMPORT_AISLES.join(", ")}
+  ],
+  "steps": [ string ]               // ordered preparation steps, one sentence-group each
+}
+
+Rules:
+- Keep ingredient "name" to the actual product to buy; put prep words (chopped, minced) out of the name where you can.
+- Pick the single best "aisle" from the allowed list for each ingredient; use "Other" only if nothing fits.
+- Do not invent ingredients or steps that aren't in the source.
+- If the source is not a recipe (no ingredients or no steps), respond with exactly {"error":"not_a_recipe"}.`;
+
+function requireAnthropic(res) {
+  if (!anthropic) {
+    res.status(503).json({
+      error: "Recipe import isn't set up yet — add an ANTHROPIC_API_KEY on the server to enable it.",
+    });
+    return false;
+  }
+  return true;
+}
+
+function importError(e) {
+  if (e && e.status === 401) return "The Claude API key was rejected. Double-check ANTHROPIC_API_KEY.";
+  if (e && e.status === 429) return "Import is busy right now — please try again in a moment.";
+  if (e && (e.status === 400 || e.status === 413)) return "That recipe was too large or malformed to import.";
+  return "Couldn't import that recipe. Please try again.";
+}
+
+// Pull a usable JSON object out of the model's text response, tolerating stray
+// prose or code fences around it.
+function safeParseJSON(text) {
+  const cleaned = (text || "").replace(/^```(?:json)?/i, "").replace(/```$/i, "").trim();
+  try {
+    return JSON.parse(cleaned);
+  } catch {
+    const a = cleaned.indexOf("{");
+    const b = cleaned.lastIndexOf("}");
+    if (a !== -1 && b > a) {
+      try {
+        return JSON.parse(cleaned.slice(a, b + 1));
+      } catch {
+        /* fall through */
+      }
+    }
+    return { error: "parse_failed" };
+  }
+}
+
+// Block obviously-internal hosts so a pasted link can't be used to probe the
+// server's own network (basic SSRF guard for a private family app).
+function isPrivateHost(host) {
+  const h = (host || "").toLowerCase();
+  if (h === "localhost" || h.endsWith(".local") || h.endsWith(".internal")) return true;
+  const m = h.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (m) {
+    const [a, b] = [Number(m[1]), Number(m[2])];
+    if (a === 10 || a === 127 || a === 0) return true;
+    if (a === 192 && b === 168) return true;
+    if (a === 169 && b === 254) return true;
+    if (a === 172 && b >= 16 && b <= 31) return true;
+  }
+  if (h === "::1" || h.startsWith("fc") || h.startsWith("fd")) return true;
+  return false;
+}
+
+// Fetch a recipe page and reduce it to text worth handing the model: the
+// schema.org/Recipe JSON-LD block when present (cheapest + cleanest), otherwise
+// the visible body text. Also returns a best-effort hero image URL.
+async function fetchRecipePage(href) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 12000);
+  let html;
+  try {
+    const r = await fetch(href, {
+      signal: ctrl.signal,
+      redirect: "follow",
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (compatible; HomebaseRecipeImport/1.0; +https://homebase.app)",
+        Accept: "text/html,application/xhtml+xml",
+      },
+    });
+    if (!r.ok) {
+      const err = new Error(`Fetch ${r.status}`);
+      err.status = r.status === 404 ? 404 : 502;
+      throw err;
+    }
+    html = await r.text();
+  } finally {
+    clearTimeout(timer);
+  }
+
+  let image = null;
+  const og = html.match(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i);
+  if (og) image = og[1];
+
+  // Prefer JSON-LD Recipe data.
+  const blocks = [...html.matchAll(/<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)];
+  for (const b of blocks) {
+    let data;
+    try {
+      data = JSON.parse(b[1].trim());
+    } catch {
+      continue;
+    }
+    const nodes = Array.isArray(data) ? data : data["@graph"] ? data["@graph"] : [data];
+    for (const node of nodes) {
+      const t = node && node["@type"];
+      const isRecipe = t === "Recipe" || (Array.isArray(t) && t.includes("Recipe"));
+      if (isRecipe) {
+        if (!image && node.image) {
+          image = typeof node.image === "string" ? node.image : node.image?.url || node.image?.[0]?.url || node.image?.[0] || null;
+        }
+        return { text: JSON.stringify(node).slice(0, 16000), image };
+      }
+    }
+  }
+
+  // Fallback: strip tags and hand over the visible text.
+  const text = html
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 12000);
+  return { text, image };
+}
+
+async function parseRecipeWithClaude({ text, imageBase64, imageMediaType, sourceUrl }) {
+  const content = [];
+  if (imageBase64) {
+    content.push({
+      type: "image",
+      source: { type: "base64", media_type: imageMediaType || "image/jpeg", data: imageBase64 },
+    });
+  }
+  content.push({
+    type: "text",
+    text: text
+      ? `Extract the recipe from this web page${sourceUrl ? ` (${sourceUrl})` : ""}:\n\n${text}`
+      : "Extract the recipe shown in this image.",
+  });
+  const msg = await anthropic.messages.create({
+    model: IMPORT_MODEL,
+    max_tokens: 2000,
+    system: IMPORT_SYSTEM,
+    messages: [{ role: "user", content }],
+  });
+  const out = (msg.content || []).filter((b) => b.type === "text").map((b) => b.text).join("").trim();
+  return safeParseJSON(out);
+}
+
+const cleanAisle = (a) => (IMPORT_AISLES.includes(a) ? a : "Other");
+function ingredientOriginal(i) {
+  const qty = i.amount != null && i.amount > 0 ? String(Number(i.amount.toFixed ? i.amount.toFixed(2) : i.amount)).replace(/\.00$/, "") : "";
+  return [qty, i.unit, i.name].filter(Boolean).join(" ").trim() || i.name;
+}
+
+// Turn a parsed recipe into the app's normalized shape, give it a stable custom
+// id, and persist it to the recipe cache so /api/recipes can resolve it later
+// (it never hits Spoonacular — the id isn't numeric).
+async function finishImportedRecipe(parsed, { sourceUrl = null, image = null } = {}) {
+  const id = "imp_" + crypto.randomBytes(6).toString("hex");
+  const ingredients = (Array.isArray(parsed.ingredients) ? parsed.ingredients : [])
+    .map((i) => {
+      const name = (i.name || "").toString().trim();
+      const amt = typeof i.amount === "number" ? i.amount : Number(i.amount);
+      return {
+        name,
+        amount: Number.isFinite(amt) && amt > 0 ? amt : null,
+        unit: (i.unit || "").toString().trim(),
+        aisle: cleanAisle((i.aisle || "Other").toString().trim()),
+        original: "",
+      };
+    })
+    .filter((i) => i.name);
+  ingredients.forEach((i) => (i.original = ingredientOriginal(i)));
+
+  const recipe = {
+    id,
+    title: (parsed.title || "Imported recipe").toString().trim(),
+    image: image || parsed.image || null,
+    readyInMinutes: Number.isFinite(Number(parsed.readyInMinutes)) ? Number(parsed.readyInMinutes) : null,
+    servings: Number.isFinite(Number(parsed.servings)) ? Number(parsed.servings) : null,
+    sourceUrl: sourceUrl || null,
+    glutenFree: false,
+    nutrition: null,
+    imported: true,
+    steps: (Array.isArray(parsed.steps) ? parsed.steps : []).map((s) => (s || "").toString().trim()).filter(Boolean),
+    ingredients,
+  };
+
+  cacheSet(`recipe:${id}`, recipe); // warm the fast in-memory cache
+  if (storageEnabled) redisSetJSON(recipeKey(id), recipe).catch(() => {}); // persist forever
+
+  const summary = {
+    id,
+    title: recipe.title,
+    image: recipe.image,
+    readyInMinutes: recipe.readyInMinutes,
+    servings: recipe.servings,
+    calories: null,
+    imported: true,
+  };
+  return { summary, recipe };
+}
+
+// Import from a pasted link.
+app.post("/api/import/url", async (req, res) => {
+  if (!requireAnthropic(res)) return;
+  const raw = (req.body && req.body.url ? req.body.url : "").toString().trim();
+  let url;
+  try {
+    url = new URL(raw);
+  } catch {
+    return res.status(400).json({ error: "That doesn't look like a valid link." });
+  }
+  if (!/^https?:$/.test(url.protocol)) return res.status(400).json({ error: "Only http and https links can be imported." });
+  if (isPrivateHost(url.hostname)) return res.status(400).json({ error: "That link can't be imported." });
+  try {
+    const { text, image } = await fetchRecipePage(url.href);
+    if (!text || text.length < 40) {
+      return res.status(422).json({ error: "Couldn't read that page. Try a screenshot of the recipe instead." });
+    }
+    const parsed = await parseRecipeWithClaude({ text, sourceUrl: url.href });
+    if (parsed.error) {
+      return res.status(422).json({ error: "That page didn't look like a recipe. Try a screenshot instead." });
+    }
+    const { summary, recipe } = await finishImportedRecipe(parsed, { sourceUrl: url.href, image });
+    res.json({ summary, recipe });
+  } catch (e) {
+    res.status(e.status && e.status < 500 ? e.status : 502).json({ error: importError(e) });
+  }
+});
+
+// Import from a screenshot / photo (base64, no data: prefix).
+const IMPORT_IMG_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
+app.post("/api/import/image", async (req, res) => {
+  if (!requireAnthropic(res)) return;
+  const body = req.body || {};
+  const image = typeof body.image === "string" ? body.image.replace(/^data:[^,]+,/, "") : "";
+  if (!image) return res.status(400).json({ error: "No image was received." });
+  if (image.length > 7_500_000) return res.status(413).json({ error: "That image is too large — try a smaller screenshot." });
+  const mediaType = IMPORT_IMG_TYPES.has(body.mediaType) ? body.mediaType : "image/jpeg";
+  try {
+    const parsed = await parseRecipeWithClaude({ imageBase64: image, imageMediaType: mediaType });
+    if (parsed.error) {
+      return res.status(422).json({ error: "Couldn't find a recipe in that image." });
+    }
+    const { summary, recipe } = await finishImportedRecipe(parsed, {});
+    res.json({ summary, recipe });
+  } catch (e) {
+    res.status(e.status && e.status < 500 ? e.status : 502).json({ error: importError(e) });
   }
 });
 

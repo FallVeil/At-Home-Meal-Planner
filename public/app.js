@@ -8,6 +8,13 @@
 // ============================================================
 const CHANGELOG = [
   {
+    build: 10,
+    date: "September 13, 2026",
+    changes: [
+      "You can now import recipes! In Find Recipes, tap “＋ Import recipe”, then either paste a link to a recipe or add a screenshot/photo of one. It reads the ingredients and steps and drops it in as a recipe you can add to a week and turn into a grocery list, just like the ones you search for.",
+    ],
+  },
+  {
     build: 9,
     date: "September 13, 2026",
     changes: [
@@ -752,6 +759,7 @@ function activateTab(name, fromHistory = false) {
 function anyOverlayOpen() {
   return (
     !$("#modal").classList.contains("hidden") ||
+    !$("#importModal").classList.contains("hidden") ||
     !$("#noteEditor").classList.contains("hidden") ||
     !$("#dayEditor").classList.contains("hidden") ||
     !$("#recurEditor").classList.contains("hidden") ||
@@ -772,6 +780,7 @@ function closeOpenOverlays() {
     return setDayEditorMode("list");
   if (!$("#dayEditor").classList.contains("hidden")) return closeDayEditor();
   if (!$("#quadModal").classList.contains("hidden")) return closeQuadModal();
+  if (!$("#importModal").classList.contains("hidden")) return closeImportModal();
   if (!$("#modal").classList.contains("hidden")) return closeModal();
 }
 // Opening an overlay pushes a history entry (see showRecipe / openNoteEditor) so
@@ -5280,6 +5289,138 @@ function closeModal() {
   releaseWakeLock();
 }
 
+// ---- Recipe import (from a link or a screenshot, Claude-powered) ------------
+let importBusy = false;
+
+function openImportModal() {
+  $("#importUrlInput").value = "";
+  setImportStatus(null);
+  $("#importModal").classList.remove("hidden");
+  pushOverlayState(); // Back closes the importer rather than the app
+  setTimeout(() => $("#importUrlInput").focus(), 50);
+}
+function closeImportModal() {
+  $("#importModal").classList.add("hidden");
+  setImportStatus(null);
+}
+function setImportStatus(kind, msg) {
+  const el = $("#importStatus");
+  if (!el) return;
+  if (!kind) {
+    el.classList.add("hidden");
+    el.innerHTML = "";
+    return;
+  }
+  el.classList.remove("hidden");
+  el.className = "import-status " + kind;
+  el.innerHTML =
+    kind === "loading" ? `<span class="spinner small"></span> ${escapeHtml(msg)}` : escapeHtml(msg);
+}
+
+// Shrink a chosen image to a sane size before upload — keeps the payload small
+// and the token cost low. Flatten onto white so transparent PNGs stay legible.
+function fileToDownscaledBase64(file, maxDim = 1600, quality = 0.85) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+      const w = Math.max(1, Math.round(img.width * scale));
+      const h = Math.max(1, Math.round(img.height * scale));
+      const canvas = document.createElement("canvas");
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext("2d");
+      ctx.fillStyle = "#fff";
+      ctx.fillRect(0, 0, w, h);
+      ctx.drawImage(img, 0, 0, w, h);
+      resolve({ base64: canvas.toDataURL("image/jpeg", quality).split(",")[1], mediaType: "image/jpeg" });
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error("Couldn't read that image."));
+    };
+    img.src = url;
+  });
+}
+
+async function doImport(endpoint, body, loadingMsg) {
+  if (importBusy) return;
+  importBusy = true;
+  setImportStatus("loading", loadingMsg);
+  try {
+    const res = await fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "Import failed.");
+    onImported(data.summary);
+  } catch (e) {
+    setImportStatus("error", e.message || "Couldn't import that recipe.");
+  } finally {
+    importBusy = false;
+  }
+}
+
+async function importImageFile(file) {
+  if (!file || !file.type.startsWith("image/")) {
+    setImportStatus("error", "That doesn't look like an image.");
+    return;
+  }
+  setImportStatus("loading", "Reading your screenshot…");
+  let shot;
+  try {
+    shot = await fileToDownscaledBase64(file);
+  } catch {
+    setImportStatus("error", "Couldn't read that image.");
+    return;
+  }
+  await doImport("/api/import/image", { image: shot.base64, mediaType: shot.mediaType }, "Reading your screenshot…");
+}
+
+// A freshly imported recipe drops in as a card at the top of the results, with
+// the usual Add-to-plan + favorite controls. It's cached server-side, so tapping
+// it opens the full details like any other recipe.
+function onImported(summary) {
+  closeImportModal();
+  if (favViewActive()) showFavView(false);
+  const results = $("#results");
+  if (results) {
+    results.insertBefore(recipeCard(summary, "search"), results.firstChild);
+    $("#staleNote")?.classList.add("hidden");
+  }
+  window.scrollTo({ top: 0, behavior: "smooth" });
+  toast(`Imported “${summary.title}” — add it to a week below.`);
+}
+
+$("#importBtn")?.addEventListener("click", openImportModal);
+$("#importClose")?.addEventListener("click", dismissOverlays);
+$("#importModal")?.addEventListener("click", (e) => {
+  if (e.target === $("#importModal")) dismissOverlays();
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !$("#importModal").classList.contains("hidden")) dismissOverlays();
+});
+$("#importUrlForm")?.addEventListener("submit", (e) => {
+  e.preventDefault();
+  const url = $("#importUrlInput").value.trim();
+  if (url) doImport("/api/import/url", { url }, "Fetching the recipe…");
+});
+$("#importFileInput")?.addEventListener("change", (e) => {
+  const f = e.target.files && e.target.files[0];
+  e.target.value = ""; // let the same file be re-picked later
+  if (f) importImageFile(f);
+});
+// Paste a screenshot straight into the importer (desktop).
+$("#importModal")?.addEventListener("paste", (e) => {
+  const item = [...(e.clipboardData?.items || [])].find((i) => i.type.startsWith("image/"));
+  const f = item && item.getAsFile();
+  if (f) importImageFile(f);
+});
+
 // ---- "What's new" changelog -------------------------------------------------
 // Show any changelog entries this device hasn't acknowledged yet, then record
 // the current build so they aren't shown again. First-ever installs are marked
@@ -5513,6 +5654,7 @@ async function init() {
   try {
     const cfg = await (await fetch("/api/config")).json();
     if (!cfg.hasKey) $("#keyBanner").classList.remove("hidden");
+    if (cfg.importEnabled) $("#importBtn")?.classList.remove("hidden");
     syncEnabled = Boolean(cfg.storage);
     household = cfg.household || "local";
     guardHouseholdData(); // drop another household's cached data before it can sync up
