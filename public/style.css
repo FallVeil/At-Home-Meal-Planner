@@ -1007,8 +1007,12 @@ button { font-family: inherit; }
   font-size: 16px;
   line-height: 1.55;
 }
-.note-foot { display: flex; align-items: center; justify-content: space-between; margin-top: 10px; }
+.note-foot { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
 .note-time { color: var(--muted); font-size: 0.78rem; }
+/* The reorder grip is always visible on note cards (no edit mode here). */
+.note-card .note-grip { display: inline-flex; width: 22px; height: 22px; }
+.note-card .note-del { margin-left: auto; }
+.note-card.drag-active { opacity: 0.92; box-shadow: 0 6px 18px rgba(0, 0, 0, 0.38); }
 .note-del {
   background: transparent;
   border: none;
@@ -1284,6 +1288,21 @@ button { font-family: inherit; }
 .todo-doneby { color: var(--pc, var(--muted)); }
 .todo-doneby:hover { border-color: currentColor; }
 .todo-doneby.on { background: var(--pc); border-color: var(--pc); color: var(--pc-ink); }
+/* Compact single done-toggle used in the matrix preview for 3+ person households. */
+.todo-quickcheck {
+  width: 22px; height: 22px; margin-top: 1px; flex: none;
+  border-radius: 50%; border: 1.5px solid var(--line);
+  background: transparent; color: var(--muted);
+  font-weight: 800; font-size: 0.72rem; line-height: 1;
+  cursor: pointer; display: inline-flex; align-items: center; justify-content: center;
+  -webkit-user-select: none; user-select: none; touch-action: manipulation;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+.todo-quickcheck:hover { border-color: var(--accent); }
+.todo-quickcheck.on { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+/* Reorder grip shown on the expanded quadrant pop-up rows. */
+#quadModalItems .todo-grip { display: inline-flex; align-self: center; }
+.todo-item.drag-active { opacity: 0.92; box-shadow: 0 6px 18px rgba(0, 0, 0, 0.38); border-radius: 8px; }
 .todo-body { flex: 1; min-width: 0; cursor: pointer; }
 .todo-title { font-size: 0.92rem; line-height: 1.28; }
 /* Completed: struck through but kept legible (thin line, near-full contrast). */

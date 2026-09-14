@@ -8,6 +8,14 @@
 // ============================================================
 const CHANGELOG = [
   {
+    build: 13,
+    date: "September 13, 2026",
+    changes: [
+      "The to-do board stays tidy with a bigger household: instead of a row of people-buttons on every task, each task in the grid now shows one check. Open a quadrant to mark exactly who finished it, like before.",
+      "You can now drag things into the order you want — quick notes (grab the ⠿ handle on a note) and to-dos within a quadrant (open the quadrant, then drag by the ⠿ handle on the right).",
+    ],
+  },
+  {
     build: 12,
     date: "September 13, 2026",
     changes: [
@@ -2191,6 +2199,29 @@ function fmtNoteTime(ts) {
   return new Date(ts).toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
+// Give every note a manual `order` (drag-to-reorder). New/orderless notes go to
+// the top; existing manual order is preserved. Seeds from newest-first on first run.
+function ensureNoteOrder() {
+  const missing = notes.filter((n) => typeof n.order !== "number");
+  if (!missing.length) return;
+  const haveOrder = notes.filter((n) => typeof n.order === "number");
+  if (!haveOrder.length) {
+    [...notes].sort((a, b) => (b.ts || 0) - (a.ts || 0)).forEach((n, i) => (n.order = i));
+  } else {
+    let min = Math.min(...haveOrder.map((n) => n.order));
+    [...missing].sort((a, b) => (b.ts || 0) - (a.ts || 0)).forEach((n) => (n.order = --min));
+  }
+  saveNotes();
+}
+function reorderNotes(orderedIds) {
+  orderedIds.forEach((id, i) => {
+    const n = notes.find((x) => x.id === id);
+    if (n) n.order = i;
+  });
+  saveNotes();
+  renderNotes();
+}
+
 function renderNotes() {
   const list = $("#notesList");
   list.innerHTML = "";
@@ -2199,14 +2230,16 @@ function renderNotes() {
     return;
   }
   $("#notesEmpty").classList.add("hidden");
+  ensureNoteOrder();
   [...notes]
-    .sort((a, b) => (b.ts || 0) - (a.ts || 0))
+    .sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
     .forEach((note) => list.appendChild(noteCard(note)));
 }
 
 function noteCard(note) {
   const card = document.createElement("div");
   card.className = "note-card";
+  card.dataset.dragkey = note.id;
 
   const text = document.createElement("div");
   text.className = "note-text";
@@ -2220,6 +2253,8 @@ function noteCard(note) {
 
   const foot = document.createElement("div");
   foot.className = "note-foot";
+  const grip = dragHandle("Drag to reorder note");
+  grip.classList.add("note-grip");
   const time = document.createElement("span");
   time.className = "note-time";
   time.textContent = note.ts ? "updated " + fmtNoteTime(note.ts) : "";
@@ -2232,8 +2267,9 @@ function noteCard(note) {
     saveNotes();
     renderNotes();
   });
-  foot.append(time, del);
+  foot.append(grip, time, del);
   card.append(text, foot);
+  bindDragSort(card, grip, ".note-card", (keys) => reorderNotes(keys));
   return card;
 }
 
@@ -2374,7 +2410,18 @@ const QUAD_ROMAN = { 1: "I", 2: "II", 3: "III", 4: "IV" };
 const quadTodos = (q) =>
   todos
     .filter((t) => t.quadrant === q)
-    .sort((a, b) => a.done - b.done || (a.ts || 0) - (b.ts || 0));
+    // Done tasks always sink; among the rest, manual `order` (drag) wins, with
+    // the creation time as the default so untouched lists read oldest-first.
+    .sort((a, b) => a.done - b.done || (a.order ?? a.ts ?? 0) - (b.order ?? b.ts ?? 0));
+// Persist a new order after dragging tasks within one quadrant's pop-up.
+function reorderTodosWithin(q, orderedIds) {
+  orderedIds.forEach((id, i) => {
+    const t = todos.find((x) => x.id === id);
+    if (t) t.order = i;
+  });
+  saveTodos();
+  afterTodosChanged();
+}
 
 // The 2x2 grid shows a compact preview of each quadrant; tapping the quadrant
 // opens the pop-up where tasks are added and edited.
@@ -2437,6 +2484,29 @@ function todoDoneControl(t) {
   });
   return wrap;
 }
+// Compact single done-toggle for the matrix preview. With more than two people
+// the per-person picker crowds the small grid cells, so the preview shows one
+// checkbox (attribution still lives in the expanded pop-up + the "✓ by" tag).
+function todoQuickCheck(t) {
+  const b = document.createElement("button");
+  b.type = "button";
+  b.className = "todo-quickcheck" + (t.done ? " on" : "");
+  b.title = t.done ? "Mark not done" : "Mark done";
+  b.setAttribute("aria-label", b.title);
+  b.textContent = t.done ? "✓" : "";
+  b.addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (t.done) {
+      t.done = false;
+      t.doneBy = [];
+    } else {
+      t.done = true; // keep any existing per-person attribution
+    }
+    saveTodos();
+    afterTodosChanged();
+  });
+  return b;
+}
 // A small "✓ by <name>" tag appended to a completed task so the attribution
 // reads clearly next to the (still-legible) struck-through title.
 function todoDoneTag(t) {
@@ -2489,7 +2559,10 @@ function todoPreviewRow(t) {
     if (doneTag) meta.appendChild(doneTag);
     body.appendChild(meta);
   }
-  row.append(todoDoneControl(t), body);
+  // Keep the per-person picker for the default 1–2 person household; collapse to
+  // a single check once there are more people, so the matrix cells stay tidy.
+  const control = activePeople().length <= 2 ? todoDoneControl(t) : todoQuickCheck(t);
+  row.append(control, body);
   return row;
 }
 
@@ -2498,6 +2571,7 @@ function todoPreviewRow(t) {
 function todoRow(t) {
   const row = document.createElement("div");
   row.className = "todo-item" + (t.done ? " done" : "");
+  row.dataset.dragkey = t.id;
   const body = document.createElement("div");
   body.className = "todo-body";
   const title = document.createElement("div");
@@ -2528,7 +2602,10 @@ function todoRow(t) {
     body.appendChild(meta);
   }
   body.addEventListener("click", () => openTodoEditor(t.quadrant, t.id));
-  row.append(todoDoneControl(t), body);
+  const grip = dragHandle("Drag to reorder task");
+  grip.classList.add("todo-grip");
+  row.append(todoDoneControl(t), body, grip);
+  bindDragSort(row, grip, ".todo-item", (keys) => reorderTodosWithin(t.quadrant, keys));
   return row;
 }
 
@@ -5378,10 +5455,14 @@ $("#addNoteForm").addEventListener("submit", (e) => {
   const input = $("#addNoteInput");
   const val = input.value.trim();
   if (!val) return;
+  const topOrder = notes.length
+    ? Math.min(...notes.map((n) => (typeof n.order === "number" ? n.order : 0))) - 1
+    : 0;
   notes.push({
     id: Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
     text: val,
     ts: Date.now(),
+    order: topOrder,
   });
   saveNotes();
   input.value = "";
