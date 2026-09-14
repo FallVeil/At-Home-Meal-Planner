@@ -36,7 +36,37 @@ body {
   background: var(--bg);
   color: var(--ink);
   line-height: 1.5;
+  overscroll-behavior-y: contain; /* our own pull-to-refresh handles the top pull */
 }
+/* Pull-to-refresh indicator (a small spinner that rides down from the top). */
+.ptr-indicator {
+  position: fixed;
+  top: -44px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: var(--card);
+  border: 1px solid var(--line);
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 60;
+  opacity: 0;
+  pointer-events: none;
+}
+.ptr-indicator.visible { opacity: 1; }
+.ptr-spinner {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 2px solid var(--line);
+  border-top-color: var(--accent);
+}
+.ptr-indicator.ready .ptr-spinner { border-top-color: var(--green); }
+.ptr-indicator.refreshing .ptr-spinner { animation: spin 0.8s linear infinite; }
 /* Subtle woven cross-hatch in the page background (behind all content). */
 body::before {
   content: "";

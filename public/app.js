@@ -8,6 +8,14 @@
 // ============================================================
 const CHANGELOG = [
   {
+    build: 14,
+    date: "September 13, 2026",
+    changes: [
+      "Gluten-free is now a tag you control in Find Recipes — tap it to turn the filter on or off. It stays on by default for your household, so nothing changes unless you switch it off to browse everything.",
+      "Pull down from the top of a screen to refresh, the same swipe-to-reload you're used to on other apps.",
+    ],
+  },
+  {
     build: 13,
     date: "September 13, 2026",
     changes: [
@@ -127,6 +135,18 @@ let windowStart = startOfWeek(new Date()); // Monday of the first week shown (de
 let targetWeek = weekKeyOf(new Date()); // week new dishes get added to
 let activeCategory = ""; // dish-type filter for search
 let lowAcidFilter = false; // opt-in "Low-acid" (GERD) recipe filter
+// Gluten-free is now a toggle (not always-on). Default is per-household — on for
+// the celiac household (andrew-katie), off elsewhere — until the user picks, then
+// their choice is remembered on this device. Provisional true until config loads.
+const GF_KEY = "mealPlanner.gfFilter";
+let gfFilter = (() => {
+  try {
+    const v = localStorage.getItem(GF_KEY);
+    if (v === "1") return true;
+    if (v === "0") return false;
+  } catch {}
+  return true;
+})();
 let groceryWeek = null; // which week the Grocery tab is currently showing
 
 function loadPlan() {
@@ -917,6 +937,37 @@ $("#lowAcidToggle").addEventListener("click", () => {
   runSearch();
 });
 
+// "Gluten-free" filter bubble. On by default for the celiac household, off
+// elsewhere; the user's toggle is remembered per device.
+function syncGfToggle() {
+  const btn = $("#gfToggle");
+  if (!btn) return;
+  btn.classList.toggle("on", gfFilter);
+  btn.setAttribute("aria-pressed", String(gfFilter));
+}
+// Once the household is known, apply its default unless the user already chose.
+function applyGfDefault() {
+  let stored = null;
+  try {
+    stored = localStorage.getItem(GF_KEY);
+  } catch {}
+  if (stored === null) {
+    gfFilter = household === "andrew-katie";
+    syncGfToggle();
+  }
+}
+$("#gfToggle")?.addEventListener("click", () => {
+  gfFilter = !gfFilter;
+  try {
+    localStorage.setItem(GF_KEY, gfFilter ? "1" : "0");
+  } catch {}
+  syncGfToggle();
+  if (favViewActive()) showFavView(false);
+  if (importedViewActive()) showImportedView(false);
+  runSearch();
+});
+syncGfToggle(); // reflect the provisional state at load
+
 // Recipe rail: category chips + a "★ Favorites" entry that swaps the rail to the
 // favorites categories.
 document.querySelectorAll("#recipeCats .chip").forEach((chip) => {
@@ -1011,7 +1062,7 @@ async function runSearch() {
   currentSearch = {
     query: $("#searchInput").value.trim(),
     type: activeCategory,
-    gf: true, // gluten-free is always enforced (celiac); control hidden
+    gf: gfFilter, // gluten-free toggle (default per household)
     under500: false,
     lowAcid: lowAcidFilter,
   };
@@ -5889,6 +5940,7 @@ async function init() {
     if (cfg.importEnabled) $("#importBtn")?.classList.remove("hidden");
     syncEnabled = Boolean(cfg.storage);
     household = cfg.household || "local";
+    applyGfDefault(); // gluten-free default depends on which household this is
     guardHouseholdData(); // drop another household's cached data before it can sync up
     applyAccountInfo(cfg);
     renderCalendarIfActive(); // paint Katie's paydays once the household is known
@@ -5920,5 +5972,68 @@ if ("serviceWorker" in navigator) {
     });
   });
 }
+
+// ---- Pull-to-refresh: drag down from the very top to reload the page ----
+// Phone-first gesture. Only engages when the page is scrolled to the top and no
+// overlay is open, so it never fights normal scrolling or a scrollable pop-up.
+(function setupPullToRefresh() {
+  const TRIGGER = 66; // px pulled (after resistance) to fire a refresh
+  const MAX = 96;
+  let startY = 0;
+  let pulling = false;
+  let dist = 0;
+
+  const ind = document.createElement("div");
+  ind.className = "ptr-indicator";
+  ind.innerHTML = `<div class="ptr-spinner"></div>`;
+  document.body.appendChild(ind);
+
+  const atTop = () => (window.scrollY || document.documentElement.scrollTop || 0) <= 0;
+  const reset = () => {
+    ind.classList.remove("visible", "ready");
+    ind.style.transform = "";
+    dist = 0;
+  };
+
+  window.addEventListener(
+    "touchstart",
+    (e) => {
+      pulling = e.touches.length === 1 && atTop() && !anyOverlayOpen();
+      if (pulling) startY = e.touches[0].clientY;
+    },
+    { passive: true }
+  );
+  window.addEventListener(
+    "touchmove",
+    (e) => {
+      if (!pulling) return;
+      const dy = e.touches[0].clientY - startY;
+      if (dy <= 0 || !atTop()) {
+        if (dist) reset();
+        pulling = dy > 0 && atTop() ? pulling : false;
+        return;
+      }
+      e.preventDefault(); // take over from the browser's own overscroll
+      dist = Math.min(MAX, dy * 0.5); // resistance
+      ind.classList.add("visible");
+      ind.classList.toggle("ready", dist >= TRIGGER);
+      ind.style.transform = `translateX(-50%) translateY(${dist}px)`;
+    },
+    { passive: false }
+  );
+  const finish = () => {
+    if (!pulling) return;
+    pulling = false;
+    if (dist >= TRIGGER) {
+      ind.classList.add("refreshing");
+      ind.style.transform = `translateX(-50%) translateY(${TRIGGER}px)`;
+      setTimeout(() => location.reload(), 300); // let the spinner show a beat
+    } else {
+      reset();
+    }
+  };
+  window.addEventListener("touchend", finish, { passive: true });
+  window.addEventListener("touchcancel", finish, { passive: true });
+})();
 
 init();
