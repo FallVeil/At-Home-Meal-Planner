@@ -625,6 +625,25 @@ app.put("/api/favorites", async (req, res) => {
     res.status(502).json({ error: "Could not save favorites." });
   }
 });
+// Per-household list of manually imported recipe summaries (the full details
+// live globally in recipe:v1:*; this is just the household's own library of them).
+app.get("/api/imports", async (req, res) => {
+  if (!storageEnabled) return res.json({ enabled: false });
+  try {
+    res.json({ enabled: true, imports: (await redisGetJSON(keyFor(req, "imports"))) || [] });
+  } catch {
+    res.status(502).json({ error: "Could not read imported recipes." });
+  }
+});
+app.put("/api/imports", async (req, res) => {
+  if (!storageEnabled) return res.json({ enabled: false });
+  try {
+    await redisSetJSON(keyFor(req, "imports"), req.body?.imports || []);
+    res.json({ ok: true });
+  } catch {
+    res.status(502).json({ error: "Could not save imported recipes." });
+  }
+});
 app.get("/api/grocery", async (req, res) => {
   if (!storageEnabled) return res.json({ enabled: false });
   try {
@@ -786,6 +805,7 @@ Respond with ONLY a JSON object — no markdown, no code fences, no commentary. 
 
 Rules:
 - Keep ingredient "name" to the actual product to buy; put prep words (chopped, minced) out of the name where you can.
+- For a quantity range like "1 to 2" or "2-3", use the lower number as "amount" and keep only the item itself in "name".
 - Pick the single best "aisle" from the allowed list for each ingredient; use "Other" only if nothing fits.
 - Do not invent ingredients or steps that aren't in the source.
 - If the source is not a recipe (no ingredients or no steps), respond with exactly {"error":"not_a_recipe"}.`;

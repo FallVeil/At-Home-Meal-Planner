@@ -8,6 +8,14 @@
 // ============================================================
 const CHANGELOG = [
   {
+    build: 11,
+    date: "September 13, 2026",
+    changes: [
+      "Your imported recipes now have a home: tap “⤓ Imported” in Find Recipes to see everything you've added from a link or a screenshot, ready to drop into a week (or tap Remove to tidy up).",
+      "Imported recipes also turn up in search now — type part of the name and your own recipes show at the top, right alongside the online ones.",
+    ],
+  },
+  {
     build: 10,
     date: "September 13, 2026",
     changes: [
@@ -196,6 +204,40 @@ function setFavNote(id, text) {
   saveFavorites();
 }
 
+// ---- Imported recipes (from a link or screenshot) — the household's own
+// library, shown in Find Recipes and matched in search. Synced like favorites.
+const IMPORTED_KEY = "mealPlanner.imported.v1";
+let importedRecipes = loadImported();
+function loadImported() {
+  try {
+    const f = JSON.parse(localStorage.getItem(IMPORTED_KEY));
+    return Array.isArray(f) ? f : [];
+  } catch {
+    return [];
+  }
+}
+function saveImported() {
+  localStorage.setItem(IMPORTED_KEY, JSON.stringify(importedRecipes));
+  scheduleImportedPush();
+}
+// Add (or move to top) a freshly imported recipe summary. Newest first.
+function addImported(summary) {
+  importedRecipes = importedRecipes.filter((r) => String(r.id) !== String(summary.id));
+  importedRecipes.unshift(summary);
+  saveImported();
+}
+function removeImported(id) {
+  importedRecipes = importedRecipes.filter((r) => String(r.id) !== String(id));
+  saveImported();
+}
+// Imports whose title matches a search query (case-insensitive). Shown at the
+// top of results so your own recipes surface alongside online ones.
+function matchImports(query) {
+  const q = (query || "").trim().toLowerCase();
+  if (!q) return [];
+  return importedRecipes.filter((r) => (r.title || "").toLowerCase().includes(q));
+}
+
 // ---- Household settings (people's names) — synced like the other data ----
 // The household holds 2–6 people. People 3–6 are added/removed in Settings; the
 // data model is index-based ("0".."5"), so a person is identified by their slot.
@@ -320,6 +362,7 @@ let syncEnabled = false;
 let household = "local"; // which household this session belongs to (from /api/config)
 let planPushTimer = null;
 let favPushTimer = null;
+let importedPushTimer = null;
 
 function schedulePlanPush() {
   if (!syncEnabled) return;
@@ -343,12 +386,23 @@ function scheduleFavPush() {
     }).catch(() => {});
   }, 700);
 }
+function scheduleImportedPush() {
+  if (!syncEnabled) return;
+  clearTimeout(importedPushTimer);
+  importedPushTimer = setTimeout(() => {
+    fetch("/api/imports", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ imports: importedRecipes }),
+    }).catch(() => {});
+  }, 700);
+}
 
 // Pull the shared plan/favorites and refresh whatever tab is showing.
 async function refreshFromServer() {
   if (!syncEnabled) return;
   try {
-    const [pr, fr, gr, nr, tr, er, dr, sr] = await Promise.all([
+    const [pr, fr, gr, nr, tr, er, dr, sr, ir] = await Promise.all([
       fetch("/api/plan").then((r) => r.json()),
       fetch("/api/favorites").then((r) => r.json()),
       fetch("/api/grocery").then((r) => r.json()),
@@ -357,6 +411,7 @@ async function refreshFromServer() {
       fetch("/api/events").then((r) => r.json()),
       fetch("/api/todos").then((r) => r.json()),
       fetch("/api/settings").then((r) => r.json()),
+      fetch("/api/imports").then((r) => r.json()),
     ]);
     if (sr.enabled && sr.settings && Array.isArray(sr.settings.people)) {
       settings = normalizeSettings(sr.settings);
@@ -372,6 +427,10 @@ async function refreshFromServer() {
       favorites = fr.favorites;
       localStorage.setItem(FAV_KEY, JSON.stringify(favorites));
       updateFavCount();
+    }
+    if (ir.enabled && Array.isArray(ir.imports)) {
+      importedRecipes = ir.imports;
+      localStorage.setItem(IMPORTED_KEY, JSON.stringify(importedRecipes));
     }
     if (gr.enabled && gr.grocery) {
       grocery = gr.grocery;
@@ -397,6 +456,7 @@ async function refreshFromServer() {
     if ($("#tab-home").classList.contains("active")) renderHome();
     if ($("#tab-plan").classList.contains("active")) renderPlanner();
     if (favViewActive()) renderFavorites();
+    if (importedViewActive()) renderImported();
     if ($("#tab-grocery").classList.contains("active") && groceryWeek) {
       renderGrocery(lastGroceryRecipes, groceryWeek);
     }
@@ -412,7 +472,7 @@ async function refreshFromServer() {
 async function initSync() {
   if (!syncEnabled) return;
   try {
-    const [pr, fr, gr, nr, tr, er, dr, sr] = await Promise.all([
+    const [pr, fr, gr, nr, tr, er, dr, sr, ir] = await Promise.all([
       fetch("/api/plan").then((r) => r.json()),
       fetch("/api/favorites").then((r) => r.json()),
       fetch("/api/grocery").then((r) => r.json()),
@@ -421,6 +481,7 @@ async function initSync() {
       fetch("/api/events").then((r) => r.json()),
       fetch("/api/todos").then((r) => r.json()),
       fetch("/api/settings").then((r) => r.json()),
+      fetch("/api/imports").then((r) => r.json()),
     ]);
     if (sr.enabled) {
       const serverPeople = sr.settings && Array.isArray(sr.settings.people) ? sr.settings.people : null;
@@ -450,6 +511,15 @@ async function initSync() {
         localStorage.setItem(FAV_KEY, JSON.stringify(favorites));
       } else if (favorites.length) {
         scheduleFavPush();
+      }
+    }
+    if (ir.enabled) {
+      const serverImports = ir.imports || [];
+      if (serverImports.length) {
+        importedRecipes = serverImports;
+        localStorage.setItem(IMPORTED_KEY, JSON.stringify(importedRecipes));
+      } else if (importedRecipes.length) {
+        scheduleImportedPush();
       }
     }
     if (gr.enabled) {
@@ -528,7 +598,7 @@ function guardHouseholdData() {
   // declared further down the file — referencing them up here would hit the
   // temporal dead zone and throw at load. By call time they're all initialized.
   const SYNCED_KEYS = [
-    PLAN_KEY, FAV_KEY, SETTINGS_KEY, GROCERY_KEY, STORE_KEY,
+    PLAN_KEY, FAV_KEY, IMPORTED_KEY, SETTINGS_KEY, GROCERY_KEY, STORE_KEY,
     NOTES_KEY, TODOS_KEY, EVENTS_KEY, TRACKER_KEY,
   ];
   let owner = null;
@@ -549,6 +619,7 @@ function guardHouseholdData() {
     }
     plan = loadPlan();
     favorites = loadFavorites();
+    importedRecipes = loadImported();
     settings = loadSettings();
     grocery = loadGrocery();
     storeData = loadStore();
@@ -813,8 +884,9 @@ document.addEventListener("visibilitychange", () => {
 // ============================================================
 $("#searchForm").addEventListener("submit", (e) => {
   e.preventDefault();
-  // Searching from the Favorites view returns to recipe results.
+  // Searching from the Favorites/Imported view returns to recipe results.
   if (favViewActive()) showFavView(false);
+  if (importedViewActive()) showImportedView(false);
   runSearch();
 });
 
@@ -826,6 +898,7 @@ $("#lowAcidToggle").addEventListener("click", () => {
   btn.classList.toggle("on", lowAcidFilter);
   btn.setAttribute("aria-pressed", String(lowAcidFilter));
   if (favViewActive()) showFavView(false);
+  if (importedViewActive()) showImportedView(false);
   runSearch();
 });
 
@@ -838,8 +911,14 @@ document.querySelectorAll("#recipeCats .chip").forEach((chip) => {
       renderFavorites();
       return;
     }
+    if (chip.dataset.view === "imported") {
+      showImportedView(true);
+      renderImported();
+      return;
+    }
     document.querySelectorAll("#recipeCats .chip").forEach((c) => c.classList.toggle("active", c === chip));
     showFavView(false);
+    showImportedView(false);
     activeCategory = chip.dataset.type;
     runSearch();
   });
@@ -855,8 +934,15 @@ document.querySelectorAll("#favCats .chip").forEach((chip) => {
     renderFavorites();
   });
 });
+// Imported rail: just a "← Back" to recipes.
+document.querySelectorAll("#impCats .chip").forEach((chip) => {
+  chip.addEventListener("click", () => {
+    if (chip.dataset.view === "recipes") showImportedView(false);
+  });
+});
 // Swap both the main content and the category rail between recipes and favorites.
 function showFavView(on) {
+  if (on) showImportedView(false); // the two alternate views are mutually exclusive
   $("#favView").classList.toggle("hidden", !on);
   $("#recipeView").classList.toggle("hidden", on);
   $("#favCats").classList.toggle("hidden", !on);
@@ -865,6 +951,33 @@ function showFavView(on) {
 // True when the Favorites view is the one on screen inside Find Recipes.
 function favViewActive() {
   return $("#tab-search").classList.contains("active") && !$("#favView").classList.contains("hidden");
+}
+
+// The Imported library — same idea as Favorites, its own view + rail.
+function showImportedView(on) {
+  if (on) {
+    $("#favView").classList.add("hidden");
+    $("#favCats").classList.add("hidden");
+  }
+  $("#importedView").classList.toggle("hidden", !on);
+  $("#recipeView").classList.toggle("hidden", on);
+  $("#impCats").classList.toggle("hidden", !on);
+  $("#recipeCats").classList.toggle("hidden", on);
+}
+function importedViewActive() {
+  return $("#tab-search").classList.contains("active") && !$("#importedView").classList.contains("hidden");
+}
+function renderImported() {
+  const list = $("#importedList");
+  const empty = $("#importedEmpty");
+  if (!list) return;
+  list.innerHTML = "";
+  if (!importedRecipes.length) {
+    empty?.classList.remove("hidden");
+    return;
+  }
+  empty?.classList.add("hidden");
+  importedRecipes.forEach((r) => list.appendChild(recipeCard(r, "imported")));
 }
 
 // Snapshot of the active search so "load more" repeats the same filters.
@@ -921,14 +1034,18 @@ async function fetchSearchPage(reset) {
     }
 
     const list = data.results || [];
+    // Your own imported recipes matching the query surface at the top of results.
+    const localMatches = reset ? matchImports(p.query) : [];
     if (reset) {
       results.innerHTML = "";
-      currentResults = list.slice();
+      currentResults = [...localMatches, ...list];
     } else {
       currentResults = currentResults.concat(list);
     }
-    if (reset && !list.length) {
+    if (reset && !currentResults.length) {
       results.innerHTML = `<div class="empty">No recipes found. Try a different search or category.</div>`;
+    } else if (reset) {
+      currentResults.forEach((r) => results.appendChild(recipeCard(r, "search")));
     } else {
       list.forEach((r) => results.appendChild(recipeCard(r, "search")));
     }
@@ -987,6 +1104,7 @@ function updateTargetBanner() {
     updateTargetBanner();
     rerenderSearchResults();
     if (favViewActive()) renderFavorites(); // update favourite cards' Add/Added state
+    if (importedViewActive()) renderImported();
   });
 }
 
@@ -1049,6 +1167,21 @@ function recipeCard(r, context, weekKey) {
       toast(`Added “${r.title}” to ${label}`);
     });
     actions.appendChild(add);
+  }
+
+  // In the Imported library, offer to remove a recipe from the library.
+  if (context === "imported") {
+    const rm = document.createElement("button");
+    rm.className = "ghost imp-remove";
+    rm.textContent = "Remove";
+    rm.title = "Remove from your imported recipes";
+    rm.addEventListener("click", (e) => {
+      e.stopPropagation();
+      removeImported(r.id);
+      renderImported();
+      toast(`Removed “${r.title}” from imported`);
+    });
+    actions.appendChild(rm);
   }
 
   // Favorite star, overlaid on the image (available in every context).
@@ -5385,15 +5518,15 @@ async function importImageFile(file) {
 // the usual Add-to-plan + favorite controls. It's cached server-side, so tapping
 // it opens the full details like any other recipe.
 function onImported(summary) {
+  addImported(summary); // save to the household's imported library (synced)
   closeImportModal();
   if (favViewActive()) showFavView(false);
-  const results = $("#results");
-  if (results) {
-    results.insertBefore(recipeCard(summary, "search"), results.firstChild);
-    $("#staleNote")?.classList.add("hidden");
-  }
+  // Jump to the Imported view so the new recipe (and the rest of your library)
+  // is right there to add to a week.
+  showImportedView(true);
+  renderImported();
   window.scrollTo({ top: 0, behavior: "smooth" });
-  toast(`Imported “${summary.title}” — add it to a week below.`);
+  toast(`Imported “${summary.title}” — add it to a week.`);
 }
 
 $("#importBtn")?.addEventListener("click", openImportModal);

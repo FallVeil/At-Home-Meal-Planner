@@ -283,8 +283,9 @@ main { max-width: 1000px; margin: 0 auto; padding: 22px 20px 80px; }
 .chip.active { background: var(--accent); color: var(--on-accent); border-color: var(--accent); font-weight: 600; }
 /* The rail holds two swappable groups (recipe categories / favorite categories). */
 .cat-group { display: flex; flex-direction: column; gap: 8px; }
-/* "★ Favorites" and "← Back" sit apart from the list below them. */
-#categoryChips .fav-chip,
+/* "★ Favorites" / "⤓ Imported" / "← Back" sit apart from the list below them.
+   Favorites + Imported pair together, with the gap after the second one. */
+#categoryChips .imp-chip,
 #categoryChips .back-chip { margin-bottom: 12px; }
 #categoryChips .back-chip { color: var(--muted); }
 
@@ -621,6 +622,8 @@ button { font-family: inherit; }
 }
 .add-btn:hover { background: var(--green); color: #fff; border-color: var(--green); }
 .add-btn.added { background: #2c3a30; color: #9ec7a8; border-color: transparent; }
+/* "Remove" on an imported-library card sits beside "Add to plan". */
+.imp-remove { flex: none; padding: 9px 12px; font-size: 0.85rem; color: var(--muted); }
 .remove-btn {
   background: transparent;
   border: 1px solid #5a4b4a;

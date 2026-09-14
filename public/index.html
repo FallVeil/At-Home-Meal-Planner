@@ -105,6 +105,7 @@
           <aside class="cat-sidebar" id="categoryChips">
             <div id="recipeCats" class="cat-group">
               <button type="button" class="chip fav-chip" data-view="favorites">★ Favorites</button>
+              <button type="button" class="chip imp-chip" data-view="imported">⤓ Imported</button>
               <button type="button" class="chip active" data-type="">All</button>
               <button type="button" class="chip" data-type="appetizer">Appetizers</button>
               <button type="button" class="chip" data-type="soup">Soups</button>
@@ -117,6 +118,9 @@
               <button type="button" class="chip" data-cat="Breakfast">Breakfast</button>
               <button type="button" class="chip" data-cat="Cold Lunch">Cold Lunch</button>
               <button type="button" class="chip" data-cat="Freezer Meal">Freezer Meal</button>
+            </div>
+            <div id="impCats" class="cat-group hidden">
+              <button type="button" class="chip back-chip" data-view="recipes">← Back</button>
             </div>
           </aside>
           <div class="search-main">
@@ -148,6 +152,12 @@
               <div id="favList" class="card-grid"></div>
               <div id="favEmpty" class="empty">
                 No favorites yet. Tap the star on any recipe to save it here.
+              </div>
+            </div>
+            <div id="importedView" class="hidden">
+              <div id="importedList" class="card-grid"></div>
+              <div id="importedEmpty" class="empty">
+                No imported recipes yet. Tap “＋ Import recipe” above to add one from a link or a screenshot.
               </div>
             </div>
           </div>
