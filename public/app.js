@@ -8,6 +8,13 @@
 // ============================================================
 const CHANGELOG = [
   {
+    build: 15,
+    date: "September 13, 2026",
+    changes: [
+      "Checked-off tasks now drop into a “Completed” box below the board, so the four quadrants only show what's still to do. Each finished task shows its due date, when it was done and by whom, colour-coded to its quadrant — tap the ✓ to reopen one.",
+    ],
+  },
+  {
     build: 14,
     date: "September 13, 2026",
     changes: [
@@ -2481,8 +2488,85 @@ function renderTodo() {
     const wrap = $("#quadItems" + q);
     if (!wrap) return;
     wrap.innerHTML = "";
-    quadTodos(q).forEach((t) => wrap.appendChild(todoPreviewRow(t)));
+    // Only active tasks live in the grid now; finished ones drop into the
+    // Completed box below, so the matrix stays focused on what's left to do.
+    quadTodos(q)
+      .filter((t) => !t.done)
+      .forEach((t) => wrap.appendChild(todoPreviewRow(t)));
   });
+  renderCompletedTodos();
+}
+
+// Short date for a completion timestamp, e.g. "Sep 13".
+function fmtCompletedDate(ts) {
+  try {
+    return new Date(ts).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  } catch {
+    return "";
+  }
+}
+
+let todoCompletedOpen = false;
+function renderCompletedTodos() {
+  const box = $("#todoCompleted");
+  const list = $("#todoCompletedList");
+  const countEl = $("#todoCompletedCount");
+  if (!box || !list) return;
+  const done = todos
+    .filter((t) => t.done)
+    .sort((a, b) => (b.doneAt || b.ts || 0) - (a.doneAt || a.ts || 0));
+  countEl.textContent = done.length;
+  box.classList.toggle("hidden", done.length === 0);
+  list.classList.toggle("hidden", !todoCompletedOpen);
+  $("#todoCompletedHead")?.setAttribute("aria-expanded", String(todoCompletedOpen));
+  const chev = $("#todoCompletedHead .chev");
+  if (chev) chev.textContent = todoCompletedOpen ? "▾" : "▸";
+  list.innerHTML = "";
+  done.forEach((t) => list.appendChild(completedTodoRow(t)));
+}
+
+// A completed task: colour-coded by its quadrant (category), with due date,
+// completion date, and who finished it. Tap the check to reopen it.
+function completedTodoRow(t) {
+  const row = document.createElement("div");
+  row.className = "completed-todo q" + t.quadrant;
+
+  const check = document.createElement("button");
+  check.type = "button";
+  check.className = "completed-check";
+  check.textContent = "✓";
+  check.title = "Reopen this task";
+  check.setAttribute("aria-label", "Reopen this task");
+  check.addEventListener("click", (e) => {
+    e.stopPropagation();
+    t.done = false;
+    t.doneBy = [];
+    delete t.doneAt;
+    saveTodos();
+    afterTodosChanged();
+  });
+
+  const body = document.createElement("div");
+  body.className = "completed-body";
+  const title = document.createElement("div");
+  title.className = "completed-title";
+  title.innerHTML = `<span class="q-dot q${t.quadrant}"></span><span class="completed-title-text"></span>`;
+  title.querySelector(".completed-title-text").textContent = t.title;
+  body.appendChild(title);
+
+  const meta = document.createElement("div");
+  meta.className = "completed-meta";
+  const bits = [];
+  if (t.due) bits.push("due " + fmtDue(t.due));
+  if (t.doneAt) bits.push("done " + fmtCompletedDate(t.doneAt));
+  const who = doneBySet(t).map((p) => personName(Number(p)));
+  if (who.length) bits.push("by " + who.join(" & "));
+  meta.textContent = bits.join("  ·  ");
+  body.appendChild(meta);
+  body.addEventListener("click", () => openTodoEditor(t.quadrant, t.id));
+
+  row.append(check, body);
+  return row;
 }
 
 function noteGlyph() {
@@ -2528,6 +2612,8 @@ function todoDoneControl(t) {
       next.sort();
       t.doneBy = next;
       t.done = next.length > 0;
+      if (t.done && !t.doneAt) t.doneAt = Date.now();
+      if (!t.done) delete t.doneAt;
       saveTodos();
       afterTodosChanged();
     });
@@ -2550,8 +2636,10 @@ function todoQuickCheck(t) {
     if (t.done) {
       t.done = false;
       t.doneBy = [];
+      delete t.doneAt;
     } else {
       t.done = true; // keep any existing per-person attribution
+      t.doneAt = Date.now();
     }
     saveTodos();
     afterTodosChanged();
@@ -2679,7 +2767,7 @@ function renderQuadModal() {
   if (openQuadModalQ == null) return;
   const wrap = $("#quadModalItems");
   wrap.innerHTML = "";
-  const items = quadTodos(openQuadModalQ);
+  const items = quadTodos(openQuadModalQ).filter((t) => !t.done); // finished tasks live in the Completed box
   items.forEach((t) => wrap.appendChild(todoRow(t)));
   $("#quadModalEmpty").classList.toggle("hidden", items.length > 0);
 }
@@ -2710,6 +2798,12 @@ document.addEventListener("keydown", (e) => {
 // One "Add task" bubble at the top opens the editor, defaulting to the last
 // quadrant used (the editor's quadrant picker lets you place it anywhere).
 $("#todoAdd").addEventListener("click", () => openTodoEditor(todoQuadrant || 1));
+
+// Completed box: collapse/expand.
+$("#todoCompletedHead")?.addEventListener("click", () => {
+  todoCompletedOpen = !todoCompletedOpen;
+  renderCompletedTodos();
+});
 
 // ---- To-do item editor ----
 function openTodoEditor(quadrant, id = null) {
