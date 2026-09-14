@@ -8,6 +8,13 @@
 // ============================================================
 const CHANGELOG = [
   {
+    build: 16,
+    date: "September 13, 2026",
+    changes: [
+      "The meal planner now starts each week on Sunday (Sun–Sat) instead of Monday. Your existing plans and grocery lists came along automatically — this week's meals stay on this week, next week stays next week.",
+    ],
+  },
+  {
     build: 15,
     date: "September 13, 2026",
     changes: [
@@ -138,7 +145,7 @@ const OLD_WEEK_KEY = "mealPlanner.week.v1";
 // plan = { "YYYY-MM-DD" (Monday of the week): [ {recipe}, ... ] }
 const WEEKS_SHOWN = 5; // this week + the next four
 let plan = loadPlan();
-let windowStart = startOfWeek(new Date()); // Monday of the first week shown (defaults to this week)
+let windowStart = startOfWeekSun(new Date()); // Sunday of the first week shown (defaults to this week)
 let targetWeek = weekKeyOf(new Date()); // week new dishes get added to
 let activeCategory = ""; // dish-type filter for search
 let lowAcidFilter = false; // opt-in "Low-acid" (GERD) recipe filter
@@ -495,6 +502,7 @@ async function refreshFromServer() {
       todos = dr.todos;
       localStorage.setItem(TODOS_KEY, JSON.stringify(todos));
     }
+    migratePlanWeeksToSunday(); // self-heal any Monday-anchored weeks pulled from the server
     if ($("#tab-home").classList.contains("active")) renderHome();
     if ($("#tab-plan").classList.contains("active")) renderPlanner();
     if (favViewActive()) renderFavorites();
@@ -687,8 +695,9 @@ function startOfWeek(d) {
   date.setDate(date.getDate() - dow);
   return date;
 }
-// Sunday-based week start — used only for the Calendar month grid's layout
-// (the Planner/chore logic stays Monday-based via startOfWeek above).
+// Sunday-based week start. This is the PLANNER + grocery week anchor (weeks run
+// Sunday–Saturday) and also the Calendar month grid's Sunday layout. The chore
+// logic and the chore history keep their own Monday-based startOfWeek above.
 function startOfWeekSun(d) {
   const date = new Date(d.getFullYear(), d.getMonth(), d.getDate());
   date.setDate(date.getDate() - date.getDay()); // getDay(): 0 = Sunday
@@ -700,21 +709,66 @@ function isoDate(d) {
   const day = String(d.getDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
 }
-// Function declaration (hoisted) so it's callable from the state setup above.
+// The plan-week key for a date — the Sunday that starts its week. Used by the
+// planner, the grocery list, and the calendar's per-week recipe bubbles.
+// (Function declaration is hoisted, so it's callable from the state setup above.)
 function weekKeyOf(d) {
-  return isoDate(startOfWeek(d));
+  return isoDate(startOfWeekSun(d));
 }
 function parseKey(key) {
   const [y, m, d] = key.split("-").map(Number);
   return new Date(y, m - 1, d);
 }
-function fmtRange(monday) {
-  const sun = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + 6);
-  const a = monday.toLocaleDateString(undefined, { month: "short", day: "numeric" });
-  const b = sun.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+// Format a plan week from its Sunday anchor as "Sun date – Sat date".
+function fmtRange(start) {
+  const end = new Date(start.getFullYear(), start.getMonth(), start.getDate() + 6);
+  const a = start.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  const b = end.toLocaleDateString(undefined, { month: "short", day: "numeric" });
   return `${a} – ${b}`;
 }
 const isThisWeek = (key) => key === weekKeyOf(new Date());
+
+// One-time migration: the planner used to anchor weeks on Monday; it now anchors
+// on Sunday. Re-key any old Monday-anchored plan/grocery weeks to the matching
+// Sunday week, preserving each week's slot relative to today (this week stays
+// this week, next week stays next week, …). Idempotent: only Monday-anchored
+// keys are touched, so once everything is Sunday-anchored this is a no-op — no
+// marker needed, and it's safe to run on every device/load.
+function migratePlanWeeksToSunday() {
+  const oldThisMon = startOfWeek(new Date()); // old Monday anchor
+  const newThisSun = startOfWeekSun(new Date()); // new Sunday anchor
+  const WEEK = 7 * 86400000;
+  const remap = (obj) => {
+    let changed = false;
+    const out = {};
+    for (const k of Object.keys(obj || {})) {
+      const d = parseKey(k);
+      if (d.getDay() === 0) {
+        out[k] = obj[k];
+        continue;
+      } // already a Sunday key
+      changed = true;
+      const weeks = Math.round((d - oldThisMon) / WEEK);
+      const nd = new Date(
+        newThisSun.getFullYear(),
+        newThisSun.getMonth(),
+        newThisSun.getDate() + weeks * 7
+      );
+      out[isoDate(nd)] = obj[k];
+    }
+    return { out, changed };
+  };
+  const p = remap(plan);
+  if (p.changed) {
+    plan = p.out;
+    savePlan();
+  }
+  const g = remap(grocery);
+  if (g.changed) {
+    grocery = g.out;
+    saveGrocery();
+  }
+}
 
 // ============================================================
 //  Elements & tabs
@@ -1150,7 +1204,7 @@ $("#loadMore").addEventListener("click", () => fetchSearchPage(false));
 // future week that already has dishes, plus the current target.
 function weekPickerOptions() {
   const weeks = new Set();
-  const today = startOfWeek(new Date());
+  const today = startOfWeekSun(new Date());
   const thisWeekKey = isoDate(today);
   for (let i = 0; i < WEEKS_SHOWN; i++) {
     weeks.add(isoDate(new Date(today.getFullYear(), today.getMonth(), today.getDate() + i * 7)));
@@ -1349,7 +1403,7 @@ function renderFavorites() {
 // ============================================================
 // Page the 5-week window forward/back, but never earlier than this week.
 function shiftWindow(deltaWeeks) {
-  const floor = startOfWeek(new Date());
+  const floor = startOfWeekSun(new Date());
   let d = new Date(
     windowStart.getFullYear(),
     windowStart.getMonth(),
@@ -1556,7 +1610,7 @@ function populateGrocerySelect() {
   const sel = $("#grocerySelect");
   if (!sel) return;
   const weeks = new Set();
-  const today = startOfWeek(new Date());
+  const today = startOfWeekSun(new Date());
   const thisWeekKey = isoDate(today);
   for (let i = 0; i < WEEKS_SHOWN; i++) {
     weeks.add(isoDate(new Date(today.getFullYear(), today.getMonth(), today.getDate() + i * 7)));
@@ -3575,10 +3629,10 @@ function renderCalendar() {
 
   for (let w = 0; w < 6; w++) {
     const rowStart = new Date(gridStart.getFullYear(), gridStart.getMonth(), gridStart.getDate() + w * 7);
-    // The Planner week is Mon–Sun; the "R" bubble tracks the Monday in this row.
-    // On Sunday-start rows that Monday is rowStart + 1 day; on Monday-start rows
-    // it's rowStart itself.
-    const wkKey = weekKeyOf(new Date(rowStart.getFullYear(), rowStart.getMonth(), rowStart.getDate() + (monday ? 0 : 1)));
+    // Planner weeks run Sun–Sat; the "R" bubble tracks the Sunday plan-week that
+    // this calendar row falls in. On a Sunday-start grid the row IS that week; on
+    // a Monday-start grid it maps to the plan-week its days mostly overlap.
+    const wkKey = weekKeyOf(rowStart);
     const row = document.createElement("div");
     row.className = "cal-week-row";
 
@@ -3720,8 +3774,8 @@ function positionWeekPop(anchor) {
   pop.style.top = top + "px";
 }
 function goToPlannerWeek(wkKey) {
-  const floor = startOfWeek(new Date());
-  let start = startOfWeek(parseKey(wkKey));
+  const floor = startOfWeekSun(new Date());
+  let start = startOfWeekSun(parseKey(wkKey));
   if (start < floor) start = floor;
   windowStart = start;
   if (wkKey >= weekKeyOf(new Date())) targetWeek = wkKey;
@@ -6043,6 +6097,7 @@ async function init() {
   } catch {
     /* server not reachable yet — ignore */
   }
+  migratePlanWeeksToSunday(); // move any old Monday-anchored plan/grocery weeks to Sunday
   maybeSeedChores(); // one-time: load the House Chores list if the tracker is empty
   runSearch(); // friendly starter results
   setTopbarHeight();
