@@ -864,6 +864,17 @@ function isPrivateHost(host) {
   return false;
 }
 
+// Resolve a possibly relative image URL against the page; only http(s) survives.
+function absUrl(u, base) {
+  if (!u || typeof u !== "string") return null;
+  try {
+    const x = new URL(u.trim(), base);
+    return /^https?:$/.test(x.protocol) ? x.href : null;
+  } catch {
+    return null;
+  }
+}
+
 // Fetch a recipe page and reduce it to text worth handing the model: the
 // schema.org/Recipe JSON-LD block when present (cheapest + cleanest), otherwise
 // the visible body text. Also returns a best-effort hero image URL.
@@ -892,8 +903,15 @@ async function fetchRecipePage(href) {
   }
 
   let image = null;
-  const og = html.match(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i);
-  if (og) image = og[1];
+  const metaImg = (re) => {
+    const m = html.match(re);
+    return m ? m[1].replace(/&amp;/g, "&") : null;
+  };
+  image =
+    metaImg(/<meta[^>]+(?:property|name)=["']og:image(?::secure_url)?["'][^>]*content=["']([^"']+)["']/i) ||
+    metaImg(/<meta[^>]+content=["']([^"']+)["'][^>]+(?:property|name)=["']og:image["']/i) ||
+    metaImg(/<meta[^>]+(?:property|name)=["']twitter:image(?::src)?["'][^>]*content=["']([^"']+)["']/i) ||
+    metaImg(/<link[^>]+rel=["']image_src["'][^>]*href=["']([^"']+)["']/i);
 
   // Prefer JSON-LD Recipe data.
   const blocks = [...html.matchAll(/<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)];
@@ -912,10 +930,24 @@ async function fetchRecipePage(href) {
         if (!image && node.image) {
           image = typeof node.image === "string" ? node.image : node.image?.url || node.image?.[0]?.url || node.image?.[0] || null;
         }
-        return { text: JSON.stringify(node).slice(0, 16000), image };
+        return { text: JSON.stringify(node).slice(0, 16000), image: absUrl(image, href) };
       }
     }
   }
+
+  // No meta/JSON-LD image: fall back to the first reasonably-sized <img> on the page.
+  if (!image) {
+    for (const m of html.matchAll(/<img[^>]*>/gi)) {
+      const tag = m[0];
+      const src = (tag.match(/\sdata-(?:lazy-)?src=["']([^"']+)["']/i) || tag.match(/\ssrc=["']([^"']+)["']/i) || [])[1];
+      if (!src || src.startsWith("data:") || /logo|icon|avatar|sprite|pixel|spacer|\.svg|\.gif/i.test(src)) continue;
+      const w = parseInt((tag.match(/\swidth=["']?(\d+)/i) || [])[1], 10);
+      if (w && w < 200) continue;
+      image = src;
+      break;
+    }
+  }
+  image = absUrl(image, href);
 
   // Fallback: strip tags and hand over the visible text.
   const text = html
@@ -985,7 +1017,7 @@ async function finishImportedRecipe(parsed, { sourceUrl = null, image = null } =
   const recipe = {
     id,
     title: (parsed.title || "Imported recipe").toString().trim(),
-    image: image || parsed.image || null,
+    image: image || absUrl(parsed.image, sourceUrl || undefined) || null,
     readyInMinutes: Number.isFinite(Number(parsed.readyInMinutes)) ? Number(parsed.readyInMinutes) : null,
     servings: Number.isFinite(Number(parsed.servings)) ? Number(parsed.servings) : null,
     sourceUrl: sourceUrl || null,
@@ -1075,6 +1107,50 @@ app.post("/api/import/image", async (req, res) => {
     res.status(e.status && e.status < 500 ? e.status : 502).json({ error: importError(e) });
   }
 });
+
+// ---- Custom recipe photos ---------------------------------------------------
+// The client downsizes a chosen photo to a small JPEG and uploads it here. It's
+// stored under an unguessable token and served back from /api/recipe-image/:token,
+// so plan/favorite/import copies only need to carry a short URL.
+app.post("/api/recipe-image", async (req, res) => {
+  if (!storageEnabled) return res.status(503).json({ error: "Photo storage isn't available right now." });
+  const b = req.body || {};
+  const data = typeof b.image === "string" ? b.image.replace(/\s/g, "") : "";
+  if (!data || data.length > 1_500_000 || !/^[A-Za-z0-9+/=]+$/.test(data)) {
+    return res.status(400).json({ error: "That photo is missing or too large." });
+  }
+  const token = crypto.randomBytes(9).toString("hex");
+  try {
+    await redisSetJSON(`recipeimg:v1:${token}`, data);
+    const url = `/api/recipe-image/${token}`;
+    // Keep the recipe's cached details in step so reopening it shows the new photo.
+    const id = b.id != null ? String(b.id) : "";
+    if (/^(imp_[0-9a-f]+|\d+)$/.test(id)) {
+      const cached = (await redisGetJSON(recipeKey(id))) || cacheGet(`recipe:${id}`);
+      if (cached) {
+        cached.image = url;
+        cacheSet(`recipe:${id}`, cached);
+        await redisSetJSON(recipeKey(id), cached);
+      }
+    }
+    res.json({ url });
+  } catch {
+    res.status(502).json({ error: "Couldn't save that photo." });
+  }
+});
+app.get("/api/recipe-image/:token", async (req, res) => {
+  if (!/^[0-9a-f]{18}$/.test(req.params.token)) return res.status(404).end();
+  try {
+    const data = await redisGetJSON(`recipeimg:v1:${req.params.token}`);
+    if (!data) return res.status(404).end();
+    res.set("Content-Type", "image/jpeg");
+    res.set("Cache-Control", "private, max-age=31536000, immutable");
+    res.send(Buffer.from(data, "base64"));
+  } catch {
+    res.status(502).end();
+  }
+});
+
 
 // Search recipes by title/keyword, optionally within a dish-type category.
 //   type=appetizer|soup|salad|main course -> category filter

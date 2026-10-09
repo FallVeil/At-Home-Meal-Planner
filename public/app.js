@@ -8,6 +8,14 @@
 // ============================================================
 const CHANGELOG = [
   {
+    build: 17,
+    date: "October 8, 2026",
+    changes: [
+      "You can now change the photo on any recipe — open it and tap “Change photo” (or “Add a photo” if it has none) to use a picture from your phone.",
+      "Importing from a link now looks harder for a photo — it checks the page's preview image and then its pictures — so more imported recipes come with one.",
+    ],
+  },
+  {
     build: 16,
     date: "September 13, 2026",
     changes: [
@@ -5765,6 +5773,38 @@ function fileToDownscaledBase64(file, maxDim = 1600, quality = 0.85) {
   });
 }
 
+// Upload a chosen photo as a recipe's picture, then point every saved copy of
+// that recipe (plan, favorites, imports) at it. Returns the new image URL.
+async function uploadRecipePhoto(id, file) {
+  if (!file.type.startsWith("image/")) throw new Error("That doesn't look like an image.");
+  const { base64 } = await fileToDownscaledBase64(file, 900, 0.8);
+  const res = await fetch("/api/recipe-image", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ id, image: base64 }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "Couldn't upload that photo.");
+  applyRecipeImage(id, data.url);
+  return data.url;
+}
+function applyRecipeImage(id, url) {
+  const same = (r) => String(r.id) === String(id);
+  let planHit = false;
+  Object.values(plan).forEach((arr) => (arr || []).forEach((r) => same(r) && ((r.image = url), (planHit = true))));
+  if (planHit) savePlan();
+  if (favorites.some(same)) {
+    favorites.forEach((r) => same(r) && (r.image = url));
+    saveFavorites();
+  }
+  if (importedRecipes.some(same)) {
+    importedRecipes.forEach((r) => same(r) && (r.image = url));
+    saveImported();
+  }
+  if (favViewActive()) renderFavorites();
+  if (importedViewActive()) renderImported();
+}
+
 async function doImport(endpoint, body, loadingMsg) {
   if (importBusy) return;
   importBusy = true;
@@ -5912,7 +5952,11 @@ async function showRecipe(id) {
     const n = r.nutrition;
     const added = inWeek(targetWeek, r.id);
     modalBody.innerHTML = `
-      <img src="${r.image || placeholder()}" alt="${escapeHtml(r.title)}" />
+      <img id="modalImg" src="${r.image || placeholder()}" alt="${escapeHtml(r.title)}" />
+      <div class="photo-row">
+        <button type="button" class="ghost photo-btn" id="modalPhotoBtn">${r.image ? "Change photo" : "Add a photo"}</button>
+        <input type="file" id="modalPhotoInput" accept="image/*" hidden />
+      </div>
       <h2>${escapeHtml(r.title)}</h2>
       <p class="card-meta">${[
         r.readyInMinutes ? `${r.readyInMinutes} min` : "",
@@ -5977,6 +6021,28 @@ async function showRecipe(id) {
       });
     }
     renderRecipeNotes();
+    const photoInput = $("#modalPhotoInput");
+    $("#modalPhotoBtn").addEventListener("click", () => photoInput.click());
+    photoInput.addEventListener("change", async () => {
+      const file = photoInput.files && photoInput.files[0];
+      photoInput.value = "";
+      if (!file) return;
+      const btn = $("#modalPhotoBtn");
+      btn.disabled = true;
+      btn.textContent = "Uploading…";
+      try {
+        const url = await uploadRecipePhoto(r.id, file);
+        r.image = url;
+        $("#modalImg").src = url;
+        btn.textContent = "Change photo";
+        toast("Photo updated");
+      } catch (e) {
+        btn.textContent = r.image ? "Change photo" : "Add a photo";
+        toast(e.message || "Couldn't upload that photo.");
+      } finally {
+        btn.disabled = false;
+      }
+    });
     $("#modalFav").addEventListener("click", () => {
       const nowFav = toggleFavorite({
         id: r.id,

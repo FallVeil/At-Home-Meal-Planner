@@ -2529,6 +2529,9 @@ button { font-family: inherit; }
   cursor: pointer; font-size: 1rem;
 }
 .modal-card img { width: 100%; border-radius: 10px; margin-bottom: 14px; }
+.modal-card img#modalImg { margin-bottom: 6px; }
+.photo-row { margin-bottom: 12px; }
+.photo-btn { font-size: 13px; padding: 6px 12px; }
 .modal-card h2 { margin-top: 0; font-family: var(--font-display); font-weight: 500; font-size: 1.5rem; line-height: 1.2; }
 .modal-card h3 { font-family: var(--font-display); font-weight: 500; }
 
